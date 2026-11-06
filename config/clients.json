@@ -1,1 +1,7 @@
-{"keys": []}
+{
+  "uitleg": "Openbare Ed25519-sleutels van de servers die meetopdrachten mogen sturen (geen geheimen). Opgehaald met evereone/meet-server action=status.",
+  "keys": [
+    { "naam": "rapportage.websitegesprek.nl", "key": "ol4UgJD1GAUKnuN3/JLPtwl91q2WnK+MUWRMh8WUbCs=", "sinds": "2026-11-06" },
+    { "naam": "evereone.nl (reserve)", "key": "Ku+GTTEYk9AfKVOWRUlOvpjWIbeXa42uC6P9Wqi/VaM=", "sinds": "2026-11-06" }
+  ]
+}

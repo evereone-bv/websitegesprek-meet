@@ -92,10 +92,14 @@ touch /etc/meet/rapportage-ip
 if [ -s /etc/meet/rapportage-ip ]; then
   IP="$(head -n1 /etc/meet/rapportage-ip | tr -dc '0-9a-fA-F:.')"
   printf '@nietrapportage {\n\tpath /v1/measure\n\tnot remote_ip %s\n}\nrespond @nietrapportage 403\n' "$IP" > /etc/meet/caddy-allow.conf
+  install -m 0644 deploy/Caddyfile /etc/caddy/Caddyfile
 else
-  : > /etc/meet/caddy-allow.conf
+  # Caddy weigert een leeg importbestand ("Could not read tokens ... EOF"): dan de import-regel weglaten.
+  rm -f /etc/meet/caddy-allow.conf
+  grep -v 'import /etc/meet/caddy-allow.conf' deploy/Caddyfile > /etc/caddy/Caddyfile
+  chmod 0644 /etc/caddy/Caddyfile
 fi
-install -m 0644 deploy/Caddyfile /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 systemctl daemon-reload
 systemctl enable --now meet-firewall.service

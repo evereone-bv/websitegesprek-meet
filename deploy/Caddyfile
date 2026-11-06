@@ -1,0 +1,22 @@
+# Caddy zet https (Let's Encrypt, automatisch vernieuwd) voor de meetserver op 127.0.0.1:8080.
+# Geen toegangslog: zo worden geen IP-adressen van mensen die een plaatje openen bewaard.
+{
+	email info@websitegesprek.nl
+}
+
+meet.websitegesprek.nl {
+	encode gzip
+	request_body {
+		max_size 64KB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	# Optioneel: alleen rapportage mag meetopdrachten sturen. Zet het uitgaande IP van rapportage in
+	# /etc/meet/rapportage-ip (één regel); install.sh vult dan de matcher hieronder. Leeg = alleen handtekening.
+	import /etc/meet/caddy-allow.conf
+	reverse_proxy 127.0.0.1:8080
+}

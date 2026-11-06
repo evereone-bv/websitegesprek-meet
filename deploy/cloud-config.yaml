@@ -1,0 +1,8 @@
+#cloud-config
+# Plak dit bij het aanmaken van de server (Hetzner: "Cloud config"; elders: "user data").
+# Er staan geen geheimen in. De server haalt de code uit GitHub en zet alles zelf neer (deploy/install.sh).
+package_update: true
+packages:
+  - git
+runcmd:
+  - [bash, -c, "git clone https://github.com/evereone-bv/websitegesprek-meet.git /opt/meet && bash /opt/meet/deploy/install.sh > /var/log/meet-install.log 2>&1"]

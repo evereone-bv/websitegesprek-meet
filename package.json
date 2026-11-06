@@ -1,6 +1,6 @@
 {
   "name": "websitegesprek-meet",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "Meetserver van Websitegesprek: meet openbare pagina's van gekoppelde sites op mobiel, tablet en desktop en geeft maten en meldingen terug.",
   "private": true,
   "type": "module",

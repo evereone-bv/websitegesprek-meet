@@ -25,7 +25,87 @@ const HIDE_BANNERS_CSS = `
 .cc-window, .cc-banner, #cookie-banner, .cookie-banner, #gdpr-cookie-consent-bar, .wpl-cookie-banner,
 #usercentrics-root, #termly-code-snippet-support, .fc-consent-root { display: none !important; }`;
 
+// Volgcodes vóór akkoord (sinds 0.3.0, besluit Raymond 53): de pagina openen als nieuwe bezoeker (schone browser,
+// geen cookies), nergens op klikken, ~5 s wachten na het laden en noteren welke verzoeken naar bekende volgdiensten
+// gaan en welke cookies van die diensten er staan. Meetverzoeken (pixels, beacons) worden hier beantwoord met een lege
+// 204 en gaan dus niet echt naar de volgdienst: geen nepbezoek in de statistieken van de klant. Alleen de scripts zelf
+// worden echt geladen, zodat ook de cookies die zij zetten zichtbaar worden. Niets wordt bewaard; cookiewaarden nooit.
+export const VOLGCODES = { pages: 3, width: 1440, waitMs: 5000, maxRequests: 40, maxCookies: 40 };
+export const VOLGDIENSTEN = [
+  ['Google Tag Manager', (h, p) => h.endsWith('googletagmanager.com') && p.startsWith('/gtm.js')],
+  ['Google Ads', (h, p, q) => (h.endsWith('googletagmanager.com') && p.startsWith('/gtag/') && /(^|&)id=AW-/i.test(q)) || h.endsWith('googleadservices.com') || h === 'doubleclick.net' || h.endsWith('.doubleclick.net')],
+  ['Google Analytics', (h, p) => h === 'google-analytics.com' || h.endsWith('.google-analytics.com') || (h.endsWith('googletagmanager.com') && p.startsWith('/gtag/')) || (h === 'analytics.google.com' && p.includes('collect'))],
+  ['Meta-pixel', (h, p) => h === 'connect.facebook.net' || (/(^|\.)facebook\.com$/.test(h) && /^\/tr\/?$/.test(p))],
+  ['Hotjar', (h) => /(^|\.)hotjar\.(com|io)$/.test(h)],
+  ['Microsoft Clarity', (h) => /(^|\.)clarity\.ms$/.test(h)],
+  ['LinkedIn Insight', (h, p) => h === 'snap.licdn.com' || h === 'px.ads.linkedin.com' || (/(^|\.)linkedin\.com$/.test(h) && p.startsWith('/px'))],
+  ['TikTok-pixel', (h) => h === 'analytics.tiktok.com' || h.endsWith('.analytics.tiktok.com')],
+  ['Pinterest-tag', (h, p) => (h === 's.pinimg.com' && p.startsWith('/ct/')) || h === 'ct.pinterest.com'],
+  ['Microsoft Ads (Bing)', (h) => h === 'bat.bing.com'],
+  ['Snapchat-pixel', (h, p) => (h === 'sc-static.net' && p.startsWith('/scevent')) || /^tr(-shadow)?\.snapchat\.com$/.test(h)],
+];
+export const VOLGCOOKIES = [
+  ['Google Analytics', /^(_ga|_ga_.+|_gid|_gat.*|__utm[a-z]|_dc_gtm_.+)$/],
+  ['Google Ads', /^(_gcl_.+|_gac_.+|IDE|DSID|test_cookie)$/],
+  ['Meta-pixel', /^(_fbp|_fbc|fr)$/],
+  ['Hotjar', /^_hj/],
+  ['Microsoft Clarity', /^(_clck|_clsk|CLID)$/],
+  ['Microsoft Ads (Bing)', /^(_uetsid|_uetvid|_uetmsclkid|MUID)$/],
+  ['LinkedIn Insight', /^(li_.+|lidc|bcookie|bscookie|UserMatchHistory|AnalyticsSyncHistory|ln_or)$/],
+  ['TikTok-pixel', /^(_ttp|_tt_enable_cookie|ttcsid.*)$/],
+  ['Pinterest-tag', /^(_pin_unauth|_pinterest_.+|_epik|_derived_epik)$/],
+  ['Snapchat-pixel', /^(_scid|_scid_r|_sctr|sc_at|_schn)$/],
+];
+const VOLGDOMEINEN = [
+  ['Meta-pixel', /(^|\.)facebook\.(com|net)$/], ['Google Ads', /(^|\.)doubleclick\.net$/], ['LinkedIn Insight', /(^|\.)linkedin\.com$/],
+  ['TikTok-pixel', /(^|\.)tiktok\.com$/], ['Pinterest-tag', /(^|\.)pinterest\.com$/], ['Microsoft Ads (Bing)', /(^|\.)bing\.com$/],
+  ['Microsoft Clarity', /(^|\.)clarity\.ms$/], ['Hotjar', /(^|\.)hotjar\.(com|io)$/], ['Snapchat-pixel', /(^|\.)snapchat\.com$/],
+  ['Google Analytics', /(^|\.)google-analytics\.com$/],
+];
+
+/** Welke volgdienst hoort bij dit adres (of null). */
+export function volgDienst(url) {
+  let u;
+  try { u = url instanceof URL ? url : new URL(url); } catch { return null; }
+  const h = u.hostname.toLowerCase();
+  const q = u.search.replace(/^\?/, '');
+  for (const [naam, f] of VOLGDIENSTEN) if (f(h, u.pathname, q)) return naam;
+  return null;
+}
+
+/** Welke volgdienst hoort bij deze cookie (naam, domein), of null. */
+export function volgCookie(name, domain) {
+  const d = String(domain || '').replace(/^\./, '').toLowerCase();
+  for (const [naam, re] of VOLGDOMEINEN) if (re.test(d)) return naam;
+  for (const [naam, re] of VOLGCOOKIES) if (re.test(String(name))) return naam;
+  return null;
+}
+
+// Alleen in de teststand: volgdiensten worden nooit echt benaderd; deze kleine scripts doen na wat de echte doen
+// (cookie zetten en een meetverzoek sturen), zodat de teststraat zonder internet en zonder echte volgdiensten draait.
+const TEST_STUBS = {
+  'Meta-pixel': "document.cookie='_fbp=fb.1.0.0;path=/';new Image().src='https://www.facebook.com/tr?id=0&ev=PageView';",
+  'Google Analytics': "(function(){var d=window.dataLayer||[],den=false;for(var i=0;i<d.length;i++){var a=Array.prototype.slice.call(d[i]||[]);if(a[0]==='consent'&&a[1]==='default'&&a[2]&&(a[2].analytics_storage==='denied'||a[2].ad_storage==='denied'))den=true;}if(!den)document.cookie='_ga=GA1.1.0.0;path=/';new Image().src='https://region1.google-analytics.com/g/collect?v=2&gcs='+(den?'G100':'G111');})();",
+  'Google Tag Manager': "document.cookie='_ga=GA1.1.0.1;path=/';new Image().src='https://www.google-analytics.com/g/collect?v=2&gcs=G111';",
+  'Hotjar': "document.cookie='_hjSessionUser_1=x;path=/';",
+  'Microsoft Clarity': "document.cookie='_clck=x;path=/';",
+};
+
 export const LIMITS = { pages: 4, widths: 4, loads: 12, selectors: 5, actions: 5, pageTimeoutMs: 25000, jobTimeoutMs: 90000 };
+
+// Vóór/na de updates (sinds 0.2.0, besluit 36/48): schermafbeelding van de hele pagina (tot SHOT_MAX_H px hoog),
+// uitgelogd (schone browser), cookiemelding verborgen, formulieren en bewegende delen gemaskeerd. Het plaatje gaat
+// alleen in het ondertekende antwoord terug naar de site; hier wordt niets bewaard.
+export const VOOR_NA = { pages: 3, widths: [390, 1440], maxHeight: 2400, quality: 60 };
+const MASK_SELECTORS = [
+  'form', 'iframe', 'video', 'canvas', 'embed', 'object', 'marquee',
+  '.swiper', '.swiper-container', '.slick-slider', '.owl-carousel', '.flexslider', '.splide', '.glide', '.carousel',
+  '.elementor-slides', '.elementor-image-carousel-wrapper', '.elementor-testimonial-carousel', '.n2-section-smartslider',
+  '.rev_slider_wrapper', '.rs-module-wrap', '.metaslider', '.wp-block-cover__video-background', '[class*="slider"]', '[class*="carousel"]',
+  '[aria-live]', '[class*="countdown"]', '.wpcf7', '.wpforms-container', '.gform_wrapper', '.frm-fluent-form', '.fluentform',
+  '#cookie-notice', '#cookie-law-info-bar', '.cky-consent-container', '#CybotCookiebotDialog', '.cmplz-cookiebanner', '#BorlabsCookieBox',
+  '.iubenda-cs-container', '#onetrust-consent-sdk', '.cc-window', '#cookie-banner', '.cookie-banner', '#usercentrics-root',
+];
 
 export class JobError extends Error {
   constructor(code, message) {
@@ -50,6 +130,16 @@ function validateJob(job) {
     if (a.type !== 'menu' && (!a.selector || String(a.selector).length > 200)) throw new JobError('ongeldige_opdracht', 'Actie zonder geldige selector.');
   }
   const engine = job.engine === 'webkit' ? 'webkit' : 'chromium';
+  if (job.doel === 'volgcodes') {
+    if (pages.length > VOLGCODES.pages) throw new JobError('ongeldige_opdracht', `Volgcodes: maximaal ${VOLGCODES.pages} pagina's.`);
+    return { pages, widths: [VOLGCODES.width], selectors: [], actions: [], engine: 'chromium', shot: false, allowed: job.allowed_hosts || [], volgcodes: true };
+  }
+  if (job.doel === 'voor_na') {
+    if (pages.length > VOOR_NA.pages) throw new JobError('ongeldige_opdracht', `Vóór/na: maximaal ${VOOR_NA.pages} pagina's.`);
+    const w = Array.isArray(job.widths) && job.widths.length ? widths : VOOR_NA.widths;
+    if (w.some((x) => !VOOR_NA.widths.includes(x))) throw new JobError('ongeldige_opdracht', `Vóór/na: schermbreedtes ${VOOR_NA.widths.join(' en ')}.`);
+    return { pages, widths: w, selectors: [], actions: [], engine: 'chromium', shot: true, allowed: job.allowed_hosts || [], voorNa: true };
+  }
   return { pages, widths, selectors, actions, engine, shot: job.shot !== false, allowed: job.allowed_hosts || [] };
 }
 
@@ -144,6 +234,7 @@ async function measureOne(browser, target, width, v, env) {
   const page = await context.newPage();
   page.on('dialog', (d) => d.dismiss().catch(() => {}));
   const blocked = [];
+  const volg = { verzoeken: [] };
   let loaded = false;
   const allowedHosts = v.allowed.map((h) => String(h).toLowerCase());
   await context.route('**/*', async (route) => {
@@ -151,6 +242,17 @@ async function measureOne(browser, target, width, v, env) {
     let u;
     try { u = new URL(req.url()); } catch { return route.abort(); }
     if (!['http:', 'https:', 'data:', 'blob:'].includes(u.protocol)) return route.abort();
+    if (v.volgcodes) {
+      const dienst = volgDienst(u);
+      if (dienst) {
+        const type = req.resourceType();
+        const gcs = u.searchParams.get('gcs') || '';
+        if (volg.verzoeken.length < VOLGCODES.maxRequests) volg.verzoeken.push({ dienst, host: u.hostname, pad: u.pathname.slice(0, 80), soort: type === 'script' ? 'script' : 'meting', ...(/^G1[0-][0-]$/.test(gcs) ? { toestemming: 'geweigerd' } : {}) });
+        if (env.trackerStub) return route.fulfill(type === 'script' ? { status: 200, contentType: 'application/javascript', body: TEST_STUBS[dienst] || '' } : { status: 204, body: '' });
+        if (type !== 'script') return route.fulfill({ status: 204, body: '' });
+        if (req.method() === 'GET') return route.continue();
+      }
+    }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method())) { blocked.push(`${req.method()} ${u.host}`); return route.abort(); }
     if (/^\[?[\d.:a-f]+\]?$/i.test(u.hostname) && !env.allowPrivate && !isPublicIp(u.hostname.replace(/^\[|\]$/g, ''))) return route.abort();
     if (req.isNavigationRequest() && req.frame() === page.mainFrame()) {
@@ -182,7 +284,15 @@ async function measureOne(browser, target, width, v, env) {
       out.fout = `De pagina gaf status ${out.status}.`;
       return out;
     }
+    if (v.volgcodes) {
+      out.volgcodes = await watchTrackers(page, context, volg, env);
+      return out;
+    }
     await page.addStyleTag({ content: HIDE_BANNERS_CSS }).catch(() => {});
+    if (v.voorNa) {
+      Object.assign(out, await shootFull(page, width));
+      return out;
+    }
     out.acties = [];
     for (const a of v.actions) out.acties.push(await runAction(page, a).catch((e) => ({ actie: a.type, gedaan: false, melding: String(e.message).slice(0, 120) })));
     for (const sel of v.selectors) {
@@ -205,6 +315,70 @@ async function measureOne(browser, target, width, v, env) {
     await context.close().catch(() => {});
   }
   return out;
+}
+
+/** Volgcodes: wachten, dan verzoeken, cookies, Consent Mode en een zichtbare cookiemelding (zonder te klikken). */
+async function watchTrackers(page, context, volg, env) {
+  const wait = Number.isFinite(env.volgWaitMs) ? env.volgWaitMs : VOLGCODES.waitMs;
+  await page.waitForTimeout(wait);
+  const cookies = [];
+  for (const c of await context.cookies().catch(() => [])) {
+    const dienst = volgCookie(c.name, c.domain);
+    if (dienst && cookies.length < VOLGCODES.maxCookies) cookies.push({ dienst, naam: c.name.slice(0, 60), domein: c.domain.replace(/^\./, '') });
+  }
+  const inPage = await page.evaluate(() => {
+    // Google Consent Mode: laatste stand in dataLayer (standaard, of een update).
+    let cm = null;
+    const dl = Array.isArray(window.dataLayer) ? window.dataLayer : [];
+    for (const e of dl) {
+      const a = e && typeof e === 'object' && typeof e.length === 'number' ? Array.from(e) : null;
+      if (a && a[0] === 'consent' && (a[1] === 'default' || a[1] === 'update') && a[2] && typeof a[2] === 'object') {
+        cm = (a[2].ad_storage === 'denied' || a[2].analytics_storage === 'denied') ? 'geweigerd' : 'toegestaan';
+      }
+    }
+    // Zichtbare cookiemelding: een zichtbare knop "akkoord/accepteren/..." in een blok waarin "cookie" staat.
+    const words = /(akkoord|accepte|accept|toestaan|allow|agree|alle cookies|instemmen|consent|zustimmen|akzeptieren|accepter)/i;
+    let knop = '';
+    for (const el of document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')) {
+      const t = (el.innerText || el.value || '').trim();
+      if (!t || t.length > 60 || !words.test(t)) continue;
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      if (!r.width || !r.height || st.visibility === 'hidden' || st.display === 'none') continue;
+      let p = el.parentElement;
+      for (let i = 0; p && i < 8; i++, p = p.parentElement) {
+        const txt = (p.innerText || '').slice(0, 4000);
+        const idc = `${p.id} ${typeof p.className === 'string' ? p.className : ''}`;
+        if (/cookie/i.test(txt) || /cookie|consent|gdpr|cmp/i.test(idc)) { knop = t.slice(0, 40); break; }
+      }
+      if (knop) break;
+    }
+    return { consent_mode: cm, cookiemelding: knop ? { gezien: true, knop } : { gezien: false } };
+  }).catch(() => ({ consent_mode: null, cookiemelding: { gezien: false } }));
+  const seen = new Set();
+  const verzoeken = volg.verzoeken.filter((r) => { const k = `${r.dienst}|${r.host}|${r.pad}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const diensten = [...new Set([...verzoeken.map((r) => r.dienst), ...cookies.map((c) => c.dienst)])];
+  return { gewacht_ms: wait, diensten, verzoeken, cookies, consent_mode: inPage.consent_mode, cookiemelding: inPage.cookiemelding };
+}
+
+/** Vóór/na: hele pagina (tot VOOR_NA.maxHeight), formulieren en bewegende delen gemaskeerd, als base64 in het antwoord. */
+async function shootFull(page, width) {
+  // Eén keer naar beneden en terug, zodat afbeeldingen die pas bij scrollen laden er vóór en na allebei staan.
+  await page.evaluate(async (max) => {
+    const step = Math.max(300, window.innerHeight - 100);
+    for (let y = 0; y < Math.min(document.documentElement.scrollHeight, max); y += step) {
+      window.scrollTo(0, y);
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    window.scrollTo(0, 0);
+  }, VOOR_NA.maxHeight).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+  await page.addStyleTag({ content: '*,*::before,*::after{caret-color:transparent!important;scroll-behavior:auto!important}html{scrollbar-width:none}::-webkit-scrollbar{display:none}' }).catch(() => {});
+  const docH = await page.evaluate(() => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)).catch(() => 0);
+  const h = Math.max(1, Math.min(VOOR_NA.maxHeight, docH || VOOR_NA.maxHeight));
+  const mask = MASK_SELECTORS.map((sel) => page.locator(sel));
+  const buf = await page.screenshot({ type: 'jpeg', quality: VOOR_NA.quality, fullPage: true, clip: { x: 0, y: 0, width, height: h }, animations: 'disabled', caret: 'hide', mask, maskColor: '#FF00FF', timeout: 15000 });
+  return { beeld: buf.toString('base64'), beeld_breedte: width, beeld_hoogte: h, pagina_hoogte: docH, gemaskeerd: 'formulieren, cookiemelding en bewegende delen (sliders, video, iframes)' };
 }
 
 /** Zelfde blok, zelfde breedte, verschillende talen: meld verschillen in ruimte groter dan 4 px. */

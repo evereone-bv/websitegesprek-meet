@@ -115,14 +115,27 @@ function wgProbe(opts) {
       const gaps = [];
       for (let i = 1; i < kids.length; i++) {
         const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();
-        gaps.push({ tussen: `${label(kids[i - 1])} en ${label(kids[i])}`, ruimte: R(b.top - a.bottom) });
+        // Sinds meetserver 0.2.0: alleen echte overlap (horizontaal én verticaal). Naast elkaar in een rij
+        // (logo-icoon naast tekst, flex-rij) is de ruimte de afstand opzij, geen overlap (websitegesprek.nl, 6 nov).
+        const hOver = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const vOver = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        const naast = vOver > 1 && hOver <= 1;
+        gaps.push({
+          tussen: `${label(kids[i - 1])} en ${label(kids[i])}`,
+          richting: naast ? 'naast' : 'onder',
+          ruimte: naast ? R(Math.max(a.left, b.left) - Math.min(a.right, b.right)) : R(b.top - a.bottom),
+          overlap: hOver > 1 && vOver > 1 ? { breed: R(hOver), hoog: R(vOver) } : null,
+        });
       }
       info.tussenruimte = gaps;
       const s = info.ruimte;
       if (s.boven >= 0 && s.onder >= 0 && Math.abs(s.boven - s.onder) > 4) add('binnenruimte_ongelijk', `${label(el)}: ruimte boven ${s.boven} px, onder ${s.onder} px.`, { regel: 'Ontwerpbasis: binnenruimte boven en onder gelijk', selector: sel });
       if (s.links >= 0 && s.rechts >= 0 && Math.abs(s.links - s.rechts) > 4 && cs.textAlign === 'center') add('binnenruimte_ongelijk', `${label(el)}: ruimte links ${s.links} px, rechts ${s.rechts} px.`, { regel: 'Ontwerpbasis: binnenruimte links en rechts gelijk', selector: sel });
       if (s.boven < -1 || s.onder < -1 || s.links < -1 || s.rechts < -1) add('overloop', `${label(el)}: inhoud loopt buiten het blok (boven ${s.boven}, onder ${s.onder}, links ${s.links}, rechts ${s.rechts} px).`, { selector: sel });
-      for (const g of gaps) if (g.ruimte < -1) add('overlap', `${g.tussen} overlappen elkaar (${g.ruimte} px).`, { selector: sel });
+      for (const g of gaps) {
+        if (g.overlap) add('overlap', `${g.tussen} overlappen elkaar (${g.overlap.breed} x ${g.overlap.hoog} px).`, { selector: sel });
+        delete g.overlap;
+      }
     }
     // Knop of link met binnenruimte die zich als tekst gedraagt (loopt over tekst en rand heen).
     for (const d of el.querySelectorAll('a, button, span, label')) {
@@ -165,11 +178,90 @@ function wgProbe(opts) {
     elements.push(info);
   }
 
-  const std = [...document.querySelectorAll(btnSel)].find((b) => visible(b) && !measuredEls.some((m) => m.contains(b)));
-  const standaardKnop = std ? { element: label(std), h: R(std.getBoundingClientRect().height) } : null;
+  // Standaardknop (sinds meetserver 0.2.0): knoppen buiten header en navigatie, de meest voorkomende hoogte
+  // (bij gelijkspel de eerste). Een knop in de header is vaak kleiner en geen goede maat (websitegesprek.nl, 6 nov).
+  const chrome = 'header, nav, [role=banner], [role=navigation], .site-header, #masthead';
+  const candidates = [...document.querySelectorAll(btnSel)].filter((b) => visible(b) && !measuredEls.some((m) => m.contains(b)));
+  const outside = candidates.filter((b) => !b.closest(chrome));
+  const pool = outside.length ? outside : candidates;
+  const byHeight = new Map();
+  for (const b of pool) {
+    const h = Math.round(b.getBoundingClientRect().height);
+    if (!byHeight.has(h)) byHeight.set(h, []);
+    byHeight.get(h).push(b);
+  }
+  let std = null;
+  for (const list of byHeight.values()) if (!std || list.length > std.length) std = list;
+  std = std ? std[0] : null;
+  const standaardKnop = std ? { element: label(std), h: R(std.getBoundingClientRect().height), aantal_gelijk: byHeight.get(Math.round(std.getBoundingClientRect().height)).length } : null;
   if (standaardKnop) {
     for (const e of elements) for (const k of e.knoppen || []) {
       if (Math.abs(k.h - standaardKnop.h) > 2) add('knop_hoogte_afwijkend', `${k.element} is ${k.h} px hoog; de standaardknop van de site is ${standaardKnop.h} px.`, { regel: 'Ontwerpbasis: een knop heeft de hoogte van de standaardknop', selector: e.selector });
+    }
+  }
+
+  const scopeAll = measuredEls.length ? measuredEls : [document.body];
+  const isGrey = (c) => {
+    const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+    const avg = (c.r + c.g + c.b) / 3;
+    return mx > 0 && (mx - mn) / mx <= 0.2 && avg >= 80 && avg <= 205;
+  };
+  const sameColor = (a, b) => a && b && Math.abs(a.r - b.r) <= 6 && Math.abs(a.g - b.g) <= 6 && Math.abs(a.b - b.b) <= 6;
+
+  // Nadruk (sinds meetserver 0.2.0): vet binnen een alinea of opsomming moet opvallen. Zelfde grijze kleur als de
+  // tekst eromheen, of niet vetter, valt niet op; bijna geen contrast met de achtergrond is onzichtbaar
+  // (websitegesprek.nl, 6 nov: vet zag er niet vet uit, en een globale fix maakte vet op donkere vlakken onzichtbaar).
+  const emph = new Map();
+  let inspected = 0;
+  for (const root of scopeAll) {
+    for (const d of root.querySelectorAll('strong, b')) {
+      if (++inspected > 300) break;
+      if (!d.parentElement || !d.parentElement.closest('p, li') || !visible(d) || !(d.innerText || '').trim()) continue;
+      const dcs = getComputedStyle(d), pcs = getComputedStyle(d.parentElement);
+      const fg = parseColor(dcs.color), pc = parseColor(pcs.color);
+      if (!fg || !pc) continue;
+      const bg = effectiveBg(d);
+      let code = null, why = '';
+      if (bg && fg.a >= 0.5) {
+        const l1 = lum(fg), l2 = lum(bg);
+        const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+        if (ratio < 1.5) { code = 'nadruk_onzichtbaar'; why = `de vette tekst is bijna onzichtbaar (${dcs.color} op ${`rgb(${bg.r}, ${bg.g}, ${bg.b})`}, contrast ${R(ratio)}:1). Geef vet op dit vlak de kleur van de tekst eromheen.`; }
+      }
+      if (!code && sameColor(fg, pc) && isGrey(fg)) { code = 'nadruk_valt_niet_op'; why = `de nadruk heeft dezelfde grijze kleur (${dcs.color}) als de tekst eromheen en valt niet op. Geef vet een donkerdere kleur, bijvoorbeeld die van de koppen.`; }
+      if (!code && sameColor(fg, pc) && Number(dcs.fontWeight) <= Number(pcs.fontWeight)) { code = 'nadruk_valt_niet_op'; why = `de nadruk is niet vetter dan de tekst eromheen (font-weight ${dcs.fontWeight} tegen ${pcs.fontWeight}) en valt niet op.`; }
+      if (!code) continue;
+      const key = code + '|' + why;
+      if (emph.has(key)) emph.get(key).n++;
+      else emph.set(key, { code, el: d, why, n: 1 });
+    }
+  }
+  [...emph.values()].slice(0, 4).forEach((e) => add(e.code, `${label(e.el)}: ${e.why}${e.n > 1 ? ` (${e.n} keer)` : ''}`, { regel: 'Ontwerpbasis: nadruk moet opvallen' }));
+
+  // Knoptekst over meer regels zonder binnenruimte boven en onder: de tekst raakt de rand.
+  const lineCount = (el) => {
+    const tops = [];
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (!n.textContent.trim()) continue;
+      const rg = document.createRange();
+      rg.selectNodeContents(n);
+      for (const r of rg.getClientRects()) if (r.width > 0 && r.height > 0) tops.push(r.top);
+    }
+    tops.sort((a, b) => a - b);
+    let lines = 0, last = -Infinity;
+    for (const t of tops) { if (t - last > 4) { lines++; last = t; } }
+    return lines;
+  };
+  const wrapSeen = new Set();
+  for (const root of scopeAll) {
+    for (const b of root.querySelectorAll(btnSel + ', a[class*="button"], a[class*="btn"], button')) {
+      if (wrapSeen.has(b) || wrapSeen.size > 200 || !visible(b)) continue;
+      wrapSeen.add(b);
+      const bcs = getComputedStyle(b);
+      const pt = px(bcs.paddingTop), pb = px(bcs.paddingBottom);
+      if (pt + pb >= 4) continue;
+      const lines = lineCount(b);
+      if (lines >= 2) add('knoptekst_zonder_binnenruimte', `${label(b)}: de knoptekst loopt over ${lines} regels en heeft geen binnenruimte boven en onder (${pt} px en ${pb} px), zodat de tekst tegen de rand zit. Geef de knop binnenruimte (bijvoorbeeld padding: 12px 24px) of maak de tekst korter.`, { regel: 'Ontwerpbasis: binnenruimte boven en onder gelijk' });
     }
   }
 

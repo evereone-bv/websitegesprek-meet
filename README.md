@@ -29,12 +29,27 @@ Claude (telefoon) → plugin op klantsite (evereone/page-measure)
   (`deploy/seccomp_profile.json`, Apache 2.0, Microsoft), alle Linux-capabilities weg, grenzen aan geheugen en processen.
 - **Niets bewaren:** geen toegangslog met IP-adressen (Caddy zonder log); app-log alleen domein, tijd, duur en
   resultaat (max. 3 × 10 MB, oudste eerst weg); plaatjes 15 minuten in het werkgeheugen.
+- **Vóór/na de updates (sinds 0.2.0, `doel: "voor_na"`):** maximaal 3 pagina's op 390 en 1440 px, hele pagina tot
+  2400 px hoog, cookiemelding verborgen, formulieren en bewegende delen (sliders, video, iframes) gemaskeerd. Het
+  plaatje gaat alleen als base64 in het ondertekende antwoord terug; hier wordt niets bewaard (ook niet 15 minuten).
+  De site bewaart het zelf en vergelijkt.
+
+- **Volgcodes vóór akkoord (sinds 0.3.0, `doel: "volgcodes"`, besluit 53):** maximaal 3 pagina's op 1440 px, als
+  nieuwe bezoeker (schone browser, geen cookies), nergens op klikken, ~5 seconden wachten na het laden. Per pagina:
+  verzoeken naar bekende volgdiensten (Meta, Google Analytics/Ads/Tag Manager, DoubleClick, Hotjar, Clarity,
+  LinkedIn, TikTok, Pinterest, Bing, Snapchat), cookies van die diensten (alleen naam en domein, nooit de waarde),
+  Google Consent Mode en of er een zichtbare cookiemelding met akkoordknop is. Meetverzoeken (pixels, beacons)
+  krijgen hier een lege 204 en gaan dus niet echt naar de volgdienst (geen nepbezoek in de statistieken van de
+  klant); alleen de scripts zelf worden geladen. In de teststand worden volgdiensten nooit benaderd (nabootsing).
+  Niets wordt bewaard.
 
 ## Lokaal testen
 
 ```
 npm install            # of: koppel een bestaande Playwright 1.63.0 in node_modules
-npm test               # 17 tests: adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken
+npm test               # 31 tests: adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken, vóór/na,
+                       # overlap naast elkaar, standaardknop, nadruk en knoptekst (0.2.0),
+                       # volgcodes vóór akkoord: direct, eigen cookiemelding, Consent Mode, text/plain, GTM na akkoord (0.3.0)
 ```
 
 ## Neerzetten (nieuwe server, ook bij uitval elders)

@@ -2,7 +2,7 @@
 // Routes:
 //   GET  /healthz                 levensteken
 //   GET  /v1/pubkey               openbare sleutel van deze meetserver (rapportage zet die vast)
-//   POST /v1/measure              ondertekende meetopdracht van rapportage
+//   POST /v1/measure              ondertekende meetopdracht van rapportage (doel: meten, "voor_na" of sinds 0.3.0 "volgcodes")
 //   GET  /v1/plaatje/<token>.jpg  klein plaatje, 15 minuten geldig, daarna weg
 import http from 'node:http';
 import fs from 'node:fs';
@@ -12,7 +12,7 @@ import { runJob, JobError } from './measure.mjs';
 import { GuardError } from './guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, MAX_SKEW_S, message, sign, verify, publicKeyFromRaw, loadOrCreateServerKey, NonceCache } from './keys.mjs';
 
-export const VERSION = '0.1.1';
+export const VERSION = '0.3.0';
 
 export function createServer(cfg) {
   const clientKeys = cfg.clientKeys.map(publicKeyFromRaw);
@@ -121,7 +121,7 @@ export function createServer(cfg) {
         await acquire();
         let result;
         try {
-          result = await runJob(job, { allowPrivate: cfg.allowPrivate, allowHttp: cfg.allowHttp, storeShot });
+          result = await runJob(job, { allowPrivate: cfg.allowPrivate, allowHttp: cfg.allowHttp, storeShot, trackerStub: cfg.trackerStub, volgWaitMs: cfg.volgWaitMs });
         } finally {
           release();
         }
@@ -159,6 +159,9 @@ export function configFromEnv(env = process.env) {
     maxShotBytes: 50 * 1024 * 1024,
     allowPrivate: env.MEET_TEST_ALLOW_PRIVATE === '1',
     allowHttp: env.MEET_TEST_ALLOW_PRIVATE === '1',
+    // Teststand: volgdiensten nooit echt benaderen (kleine nabootsing in plaats van het echte script).
+    trackerStub: env.MEET_TEST_ALLOW_PRIVATE === '1',
+    volgWaitMs: env.MEET_TEST_ALLOW_PRIVATE === '1' && env.MEET_VOLG_WAIT_MS ? Number(env.MEET_VOLG_WAIT_MS) : undefined,
   };
 }
 

@@ -56,7 +56,7 @@ export function checkUrl(raw, allowedHosts, { allowHttp = false } = {}) {
     throw new GuardError('ongeldig_adres', 'Adressen met een poortnummer worden niet gemeten.');
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (net.isIP(host.replace(/^\[|\]$/g, ''))) {
+  if (net.isIP(host.replace(/^\[|\]$/g, '')) && !allowHttp) {
     throw new GuardError('ongeldig_adres', 'Alleen domeinnamen, geen IP-adressen.');
   }
   const allowed = (allowedHosts || []).map((h) => String(h).toLowerCase().replace(/\.$/, ''));

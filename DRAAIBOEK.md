@@ -7,7 +7,8 @@ te zetten.
 
 1. Server aanmaken: Ubuntu 24.04, 2 vCPU / 4 GB (Hetzner CX23, of CAX11 op ARM), locatie Duitsland.
 2. Bij "Cloud config" / "user data" de inhoud van `deploy/cloud-config.yaml` plakken. Geen SSH-sleutel nodig.
-3. Firewall bij de provider: inkomend alleen TCP 80 en 443 (en ICMP). Uitgaand alles.
+3. Firewall bij de provider, naam `fw-meet`: inkomend alleen TCP 80, TCP 443 en ICMP (geen 22). Uitgaand leeg (= alles). Bij Hetzner: eerst server aanmaken, dan Firewalls › Create Firewall › Apply to de server.
+   Huidige server (6 nov 2026): Hetzner-project Websitegesprek, `meet-websitegesprek`, CX23, Nuremberg, Ubuntu 24.04, IPv4 2.31.119.36.
 4. DNS (Hostnet): A-record `meet` → IPv4 van de server, TTL 300.
 5. Na ca. 5 minuten: `https://meet.websitegesprek.nl/healthz` geeft `{"ok":true,...}`.
 6. Openbare sleutel ophalen: `https://meet.websitegesprek.nl/v1/pubkey` en in rapportage vastzetten

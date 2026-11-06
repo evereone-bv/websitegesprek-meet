@@ -93,9 +93,18 @@ function wgProbe(opts) {
     });
     // Het zichtbare bereik van de inhoud: ook kleinkinderen die buiten hun ouder lopen tellen mee.
     let cTop = Infinity, cBottom = -Infinity, cLeft = Infinity, cRight = -Infinity;
+    // Uitklapmenu's en andere zwevende delen (position absolute/fixed, ook hun inhoud) horen over de pagina heen
+    // te vallen: die tellen niet mee als overloop (Puglia taalkeuze, 6 nov).
+    const floating = (d) => {
+      for (let n = d; n && n !== el; n = n.parentElement) {
+        const p = getComputedStyle(n).position;
+        if (p === 'absolute' || p === 'fixed') return true;
+      }
+      return false;
+    };
     for (const d of el.querySelectorAll('*')) {
       if (!visible(d)) continue;
-      if (getComputedStyle(d).position === 'absolute' || getComputedStyle(d).position === 'fixed') continue;
+      if (floating(d)) continue;
       const dr = d.getBoundingClientRect();
       cTop = Math.min(cTop, dr.top); cBottom = Math.max(cBottom, dr.bottom);
       cLeft = Math.min(cLeft, dr.left); cRight = Math.max(cRight, dr.right);

@@ -28,6 +28,8 @@ const pages = {
   '/contrast': html('<p class="licht" style="color:#cccccc;background:#fff;font-size:16px">Lichtgrijze tekst</p>'),
   '/menu': html(`<header><button class="wp-block-navigation__responsive-container-open" style="width:48px;height:48px" onclick="document.getElementById('m').style.display='block'">Menu</button></header>
      <nav id="m" class="menu-open" style="display:none;padding:20px"><a href="#a">Home</a></nav>`),
+  '/taalkeuze': html(`<style>.lang{position:relative;width:68px;height:48px;margin:20px}.lang ul{position:absolute;top:0;left:0;right:0;margin:0;padding:2px;list-style:none;background:#fff}.lang li{display:none;height:44px}.lang li.cur,.lang:focus-within li{display:block}</style>
+     <nav class="lang"><ul><li class="cur"><span tabindex="0" class="cur-btn">NL</span></li><li><a href="#en">EN</a></li></ul></nav>`),
   '/link': html('<a id="weg" href="/elders" style="display:inline-block;padding:20px">Naar elders</a>'),
   '/post-bij-laden': html('<p class="x">Hallo</p><script>fetch("/track",{method:"POST",body:"x"}).catch(()=>{})</script>'),
   '/elders': html('<p>Elders</p>'),
@@ -155,6 +157,13 @@ test('menu openen werkt, en daarna is het menu zichtbaar en meetbaar', async () 
   const m = r.json.metingen[0];
   assert.equal(m.acties[0].gedaan, true);
   assert.equal(m.blokken[0].gevonden, true);
+});
+
+test('geopend uitklapmenu (taalkeuze) telt niet als overloop', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/taalkeuze` }], widths: [390], actions: [{ type: 'focus', selector: '.cur-btn' }], selectors: ['.lang'], shot: false });
+  const m = r.json.metingen[0];
+  assert.equal(m.acties[0].gedaan, true);
+  assert.ok(!codes(m).includes('overloop'), JSON.stringify(m.meldingen));
 });
 
 // ---------- alleen kijken ----------

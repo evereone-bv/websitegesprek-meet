@@ -34,7 +34,7 @@ Claude (telefoon) → plugin op klantsite (evereone/page-measure)
 
 ```
 npm install            # of: koppel een bestaande Playwright 1.63.0 in node_modules
-npm test               # 16 tests: adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken
+npm test               # 17 tests: adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken
 ```
 
 ## Neerzetten (nieuwe server, ook bij uitval elders)

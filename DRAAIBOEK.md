@@ -40,6 +40,6 @@ Caddy weigert dan meetopdrachten van andere adressen (de handtekening blijft daa
 
 ## E. Controle na wijzigingen
 
-- `npm test` lokaal groen (16 tests).
+- `npm test` lokaal groen (17 tests).
 - Na neerzetten: healthz, pubkey, proefmeting.
 - Firewall controleren in de console: `iptables -S MEET-EGRESS` toont de DROP-regels voor interne netwerken.

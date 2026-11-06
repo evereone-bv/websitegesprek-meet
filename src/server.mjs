@@ -12,7 +12,7 @@ import { runJob, JobError } from './measure.mjs';
 import { GuardError } from './guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, MAX_SKEW_S, message, sign, verify, publicKeyFromRaw, loadOrCreateServerKey, NonceCache } from './keys.mjs';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 export function createServer(cfg) {
   const clientKeys = cfg.clientKeys.map(publicKeyFromRaw);

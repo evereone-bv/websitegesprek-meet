@@ -281,5 +281,100 @@ function wgProbe(opts) {
     if (small.length) add('tikdoel_klein', `${small.length} tikdoel(en) kleiner dan 44 x 44 px: ${small.slice(0, 5).join('; ')}${small.length > 5 ? '; ...' : ''}.`, { regel: 'WCAG 2.2 AAA 2.5.5 (44 px), minimaal AA 2.5.8 (24 px)' });
   }
 
-  return { schermbreedte: vw, paginabreedte: docW, standaardknop: standaardKnop, blokken: elements, meldingen: findings };
+  // Lettergrootte per rol (sinds meetserver 0.4.0, besluit 177): per rol de voorkomende groottes, zodat de plugin
+  // pagina's onderling en met het ontwerpprofiel kan vergelijken. Binnen één pagina: dezelfde rol in meer groottes
+  // (alleen als de afwijkende grootte vaker dan één keer voorkomt of een kop is) melden.
+  const ROLLEN = {
+    h1: 'h1', h2: 'h2', h3: 'h3', h4: 'h4',
+    broodtekst: 'main p, article p, .entry-content p, main li, .entry-content li',
+    knop: btnSel,
+    label: 'label',
+    menu: 'nav a, [role=navigation] a, .menu a',
+    footer: 'footer p, footer a, footer li, .site-footer p, .site-footer a',
+  };
+  const NAMEN = { h1: 'Kop H1', h2: 'Kop H2', h3: 'Kop H3', h4: 'Kop H4', broodtekst: 'Broodtekst', knop: 'Knoppen', label: 'Labels', menu: 'Menu', footer: 'Footer' };
+  const lettergroottes = {};
+  for (const [rol, sel] of Object.entries(ROLLEN)) {
+    const tel = new Map();
+    let n = 0;
+    for (const el of document.querySelectorAll(sel)) {
+      if (++n > 400) break;
+      if (!visible(el) || !(el.innerText || el.value || '').trim()) continue;
+      if (rol === 'broodtekst' && el.closest('footer, nav, header, .site-footer, .site-header')) continue;
+      if (rol === 'menu' && el.closest('footer, .site-footer')) continue;
+      const fs = R(px(getComputedStyle(el).fontSize));
+      if (!fs) continue;
+      if (!tel.has(fs)) tel.set(fs, { aantal: 0, voorbeeld: label(el) });
+      tel.get(fs).aantal++;
+    }
+    if (!tel.size) continue;
+    const lijst = [...tel.entries()].map(([px_, v]) => ({ px: px_, aantal: v.aantal, voorbeeld: v.voorbeeld })).sort((a, b) => b.aantal - a.aantal);
+    lettergroottes[rol] = lijst;
+    const kop = /^h\d$/.test(rol);
+    const afwijkend = lijst.slice(1).filter((g) => Math.abs(g.px - lijst[0].px) >= 1 && (kop || g.aantal >= 2) && !(rol === 'knop' || rol === 'footer'));
+    if (afwijkend.length) {
+      add('lettergrootte_wisselt', `${NAMEN[rol]} heeft op deze pagina meer groottes: ${lijst[0].px} px (${lijst[0].aantal} keer) en ${afwijkend.map((g) => `${g.px} px (${g.aantal} keer, bijv. ${g.voorbeeld})`).join(', ')}. Eén grootte per rol.`, { regel: 'Ontwerpbasis: één lettergrootte per rol (besluit 177)', rol });
+    }
+  }
+
+  // Iconen in een rondje of knop (sinds meetserver 0.4.0, besluit 181): (a) een letterteken (+, −, ×, ›, ✓ …) als
+  // icoon staat bijna nooit precies in het midden (de inkt van een teken zit niet midden in de regel); (b) een getekend
+  // icoon (svg, span, ::before/::after) mag niet meer dan 1 px uit het midden van zijn rondje of knop staan.
+  const TEKENS = /^[+\-−–×xX✕✖›‹»«<>✓✔→←↑↓▾▸▼▲⌄]$/u;
+  const klein = (el) => { const r = el.getBoundingClientRect(); return r.width >= 8 && r.height >= 8 && r.width <= 64 && r.height <= 64; };
+  const rondOfVak = (el) => {
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const rond = px(cs.borderTopLeftRadius) >= Math.min(r.width, r.height) * 0.4;
+    const vlak = (parseColor(cs.backgroundColor) || { a: 0 }).a > 0.05 || px(cs.borderTopWidth) > 0;
+    return (rond && vlak) || (vlak && Math.abs(r.width - r.height) <= 2) || el.matches('button, [role=button], summary');
+  };
+  const pseudoIcoon = (el, which) => {
+    const ps = getComputedStyle(el, which);
+    if (!ps || ps.content === 'none' || ps.content === 'normal' || ps.display === 'none') return null;
+    return ps;
+  };
+  const icoonGezien = new Set();
+  let icoonN = 0;
+  for (const el of document.querySelectorAll('body *')) {
+    if (++icoonN > 3000 || icoonGezien.size >= 6) break;
+    if (!visible(el) || !klein(el) || !rondOfVak(el)) continue;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const tekst = (el.innerText || '').trim();
+    let melding = null;
+    // (a) letterteken als inhoud of als content van ::before/::after
+    let teken = TEKENS.test(tekst) ? tekst : '';
+    if (!teken) for (const w of ['::before', '::after']) {
+      const ps = pseudoIcoon(el, w);
+      const c = ps ? ps.content.replace(/^["']|["']$/g, '') : '';
+      if (c && TEKENS.test(c)) { teken = c; break; }
+    }
+    if (teken) melding = `${label(el)}: het icoon is een letterteken ("${teken}"). Een teken staat bijna nooit precies in het midden van een rondje of knop. Teken het met CSS-streepjes of een SVG met een gecentreerde viewBox, in hele pixels.`;
+    // (b) getekend icoon uit het midden
+    if (!melding && !tekst) {
+      let ir = null;
+      const kind = el.querySelector('svg, img, i, span');
+      if (kind && visible(kind) && el.children.length === 1) {
+        if (kind.tagName.toLowerCase() === 'svg' && kind.getBBox) {
+          try {
+            const bb = kind.getBBox(), m = kind.getScreenCTM();
+            if (m && bb.width > 0) { const a = new DOMPoint(bb.x, bb.y).matrixTransform(m), b = new DOMPoint(bb.x + bb.width, bb.y + bb.height).matrixTransform(m); ir = { left: Math.min(a.x, b.x), top: Math.min(a.y, b.y), right: Math.max(a.x, b.x), bottom: Math.max(a.y, b.y) }; }
+          } catch (e) { ir = null; }
+        }
+        if (!ir) { const k = kind.getBoundingClientRect(); if (k.width > 0 && k.width < r.width) ir = k; }
+      }
+      if (ir) {
+        const dx = R((ir.left + ir.right) / 2 - cx), dy = R((ir.top + ir.bottom) / 2 - cy);
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) melding = `${label(el)}: het icoon staat ${Math.abs(dx) > 1 ? `${Math.abs(dx)} px te ${dx > 0 ? 'rechts' : 'links'}` : ''}${Math.abs(dx) > 1 && Math.abs(dy) > 1 ? ' en ' : ''}${Math.abs(dy) > 1 ? `${Math.abs(dy)} px te ${dy > 0 ? 'laag' : 'hoog'}` : ''} in zijn rondje of knop.`;
+      }
+    }
+    if (!melding) continue;
+    const sel = label(el);
+    if (icoonGezien.has(sel)) continue;
+    icoonGezien.add(sel);
+    add('icoon_niet_gecentreerd', melding, { regel: 'Ontwerpbasis: iconen exact gecentreerd, getekend en niet als letterteken (besluit 181)' });
+  }
+
+  return { schermbreedte: vw, paginabreedte: docW, standaardknop: standaardKnop, blokken: elements, meldingen: findings, lettergroottes };
 }

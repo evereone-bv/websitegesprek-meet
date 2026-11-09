@@ -60,6 +60,15 @@ const pages = {
   '/volg-gtm-na-akkoord': html(`<div class="cookie-consent"><span>Cookies?</span><a href="#" role="button" id="ok">Accepteer alle cookies</a></div>
      <script>document.getElementById('ok').addEventListener('click',function(e){e.preventDefault();(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var j=d.createElement(s);j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i;d.head.appendChild(j);})(window,document,'script','dataLayer','GTM-AB12CD');});</script>`),
   '/volg-later': html('<p>Na 1,5 seconde</p><script>setTimeout(function(){var s=document.createElement("script");s.src="https://www.clarity.ms/tag/abc";document.head.appendChild(s);},1500);</script>'),
+  // Sinds 0.4.0 (besluit 177 en 181): lettergrootte per rol en iconen in rondjes.
+  '/lettergroottes': html(`<main><h2 style="font-size:32px">Een</h2><h2 style="font-size:28px">Twee</h2><p style="font-size:18px">Tekst een.</p><p style="font-size:18px">Tekst twee.</p><p style="font-size:16px">Klein een.</p><p style="font-size:16px">Klein twee.</p><p style="font-size:18px">Tekst drie.</p></main>`),
+  '/lettergroottes-goed': html(`<main><h2 style="font-size:32px">Een</h2><h2 style="font-size:32px">Twee</h2><p style="font-size:18px">Tekst een.</p><p style="font-size:18px">Tekst twee.</p></main>`),
+  '/iconen': html(`<style>.r{width:40px;height:40px;border-radius:50%;background:#0e1b2c;color:#fff;display:inline-flex;align-items:center;justify-content:center;margin:10px;font:24px/1 sans-serif}
+     .p{position:relative}.p::before{content:"";position:absolute;left:12px;top:19px;width:16px;height:2px;background:#fff}
+     .s{position:relative;display:inline-block;width:40px;height:40px;border-radius:50%;background:#0e1b2c;margin:10px}.s span{position:absolute;left:20px;top:12px;width:16px;height:16px;background:#fff}
+     .k::after{content:"+"}</style>
+     <span class="r teken">+</span><span class="r k pseudo"></span><span class="r p goed"></span><span class="s scheef"><span></span></span>
+     <span class="s recht"><span style="left:12px;top:12px"></span></span>`),
   '/voor-na': html(`<h1 style="margin:20px">Welkom</h1><p class="tekst" style="margin:20px">Gewone tekst.</p>
      <form style="margin:20px;height:80px;background:#eee"><input name="q" value="${'x'.repeat(5)}"></form>`),
 };
@@ -378,4 +387,22 @@ test('volgcodes: maximaal 3 pagina\'s, één breedte, geen selectors/acties; mee
   assert.equal(b.json.metingen.length, 2);
   assert.deepEqual(b.json.metingen.map((m) => m.volgcodes.diensten), [['Meta-pixel'], []]);
   assert.equal(b.json.metingen[0].acties, undefined, 'niets aangeklikt');
+});
+
+test('lettergrootte per rol: per rol de groottes in het antwoord; wisselende kop- en broodtekstgrootte gemeld (besluit 177)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/lettergroottes` }, { url: `${base}/lettergroottes-goed` }], widths: [1440], shot: false });
+  const [fout, goed] = r.json.metingen;
+  assert.deepEqual(fout.lettergroottes.h2.map((g) => g.px).sort(), [28, 32], JSON.stringify(fout.lettergroottes));
+  assert.equal(fout.lettergroottes.broodtekst[0].px, 18);
+  assert.ok(fout.meldingen.some((x) => x.code === 'lettergrootte_wisselt' && x.rol === 'h2'), JSON.stringify(fout.meldingen));
+  assert.ok(fout.meldingen.some((x) => x.code === 'lettergrootte_wisselt' && x.rol === 'broodtekst' && /16 px \(2 keer/.test(x.melding)), JSON.stringify(fout.meldingen));
+  assert.ok(!goed.meldingen.some((x) => x.code === 'lettergrootte_wisselt'), JSON.stringify(goed.meldingen));
+});
+test('iconen: letterteken in een rondje (ook via ::after) en een getekend icoon uit het midden gemeld; gecentreerd niet (besluit 181)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/iconen` }], widths: [1440], shot: false });
+  const f = r.json.metingen[0].meldingen.filter((x) => x.code === 'icoon_niet_gecentreerd');
+  assert.ok(f.some((x) => /teken.*letterteken \("\+"\)/.test(x.melding)), JSON.stringify(f));
+  assert.ok(f.some((x) => /span\.r\.k:.*letterteken/.test(x.melding)), JSON.stringify(f));
+  assert.ok(f.some((x) => /scheef.*8 px te rechts/.test(x.melding)), JSON.stringify(f));
+  assert.ok(!f.some((x) => /span\.r\.p|span\.s\.recht/.test(x.melding)), JSON.stringify(f));
 });

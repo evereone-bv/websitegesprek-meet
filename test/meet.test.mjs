@@ -69,6 +69,10 @@ const pages = {
      .k::after{content:"+"}</style>
      <span class="r teken">+</span><span class="r k pseudo"></span><span class="r p goed"></span><span class="s scheef"><span></span></span>
      <span class="s recht"><span style="left:12px;top:12px"></span></span>`),
+  // Sinds 0.4.1 (besluit 175): korte pagina met strook, 404-pagina, dichtgeklapte vragen.
+  '/kort': html(`<main style="margin:0"><h1 style="margin:0">Kort</h1></main><footer style="background:#0e1b2c;color:#fff;height:120px">Footer</footer>`),
+  '/faq': html(`<section class="faq" style="padding:24px"><details><summary style="height:40px">Vraag een</summary><p style="height:600px">Antwoord dat lang is.</p></details><details><summary style="height:40px">Vraag twee</summary><p>Antwoord.</p></details></section>`),
+  '/knoppen': html(`<details class="v"><summary class="s">Open mij</summary><p>Binnen</p></details>`),
   '/voor-na': html(`<h1 style="margin:20px">Welkom</h1><p class="tekst" style="margin:20px">Gewone tekst.</p>
      <form style="margin:20px;height:80px;background:#eee"><input name="q" value="${'x'.repeat(5)}"></form>`),
 };
@@ -405,4 +409,23 @@ test('iconen: letterteken in een rondje (ook via ::after) en een getekend icoon 
   assert.ok(f.some((x) => /span\.r\.k:.*letterteken/.test(x.melding)), JSON.stringify(f));
   assert.ok(f.some((x) => /scheef.*8 px te rechts/.test(x.melding)), JSON.stringify(f));
   assert.ok(!f.some((x) => /span\.r\.p|span\.s\.recht/.test(x.melding)), JSON.stringify(f));
+});
+
+test('lege strook onder de footer op een korte pagina, gemeten op een hoog scherm (besluit 175)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/kort` }], widths: [1440], shot: false, hoog: true });
+  const f = r.json.metingen[0].meldingen.filter((x) => x.code === 'lege_strook_onder_footer');
+  assert.ok(f.length === 1 && /scherm 1400 px hoog/.test(f[0].melding), JSON.stringify(r.json.metingen[0].meldingen));
+});
+test('404-pagina meten met verwachte_status (besluit 175)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/bestaat-niet` }], widths: [390], shot: false, verwachte_status: 404 });
+  assert.equal(r.json.metingen[0].status, 404);
+  assert.ok(!r.json.metingen[0].fout && Array.isArray(r.json.metingen[0].meldingen), JSON.stringify(r.json.metingen[0]));
+  const z = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/bestaat-niet` }], widths: [390], shot: false });
+  assert.ok(/status 404/.test(z.json.metingen[0].fout || ''));
+});
+test('dichtgeklapte vragen geven geen overloop; klikken met action/element werkt ook (besluit 175)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/faq` }], widths: [1440], selectors: ['.faq'], shot: false });
+  assert.ok(!r.json.metingen[0].meldingen.some((x) => x.code === 'overloop'), JSON.stringify(r.json.metingen[0].meldingen));
+  const k = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/knoppen` }], widths: [1440], shot: false, actions: [{ action: 'click', element: 'summary.s' }] });
+  assert.ok(k.json.metingen[0].acties[0].gedaan, JSON.stringify(k.json.metingen[0].acties));
 });

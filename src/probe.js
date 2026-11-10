@@ -9,6 +9,10 @@ function wgProbe(opts) {
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return false;
+    // Sinds 0.4.1: inhoud van een dichtgeklapte vraag (<details> zonder open) is niet te zien, ook al heeft hij in
+    // nieuwe Chrome-versies wel afmetingen (melding 'overloop' bij een FAQ-blok, Marketing 8 nov).
+    const dicht = el.closest && el.closest('details:not([open])');
+    if (dicht && dicht !== el && !el.closest('summary')) return false;
     const cs = getComputedStyle(el);
     return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.01;
   };
@@ -279,6 +283,18 @@ function wgProbe(opts) {
       }
     }
     if (small.length) add('tikdoel_klein', `${small.length} tikdoel(en) kleiner dan 44 x 44 px: ${small.slice(0, 5).join('; ')}${small.length > 5 ? '; ...' : ''}.`, { regel: 'WCAG 2.2 AAA 2.5.5 (44 px), minimaal AA 2.5.8 (24 px)' });
+  }
+
+  // Sinds 0.4.1 (besluit 175): pagina korter dan het scherm met een lege strook onder de footer.
+  {
+    const vh = window.innerHeight;
+    const docH = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    const voeten = [...document.querySelectorAll('footer, .site-footer, [role=contentinfo]')].filter(visible);
+    const voet = voeten.length ? voeten[voeten.length - 1] : null;
+    if (voet && docH <= vh + 1) {
+      const strook = R(vh - voet.getBoundingClientRect().bottom);
+      if (strook > 8) add('lege_strook_onder_footer', `De pagina is korter dan het scherm: onder de footer staat een lege strook van ${strook} px (scherm ${vh} px hoog). Laat het laatste blok of de inhoud het scherm vullen, of zet de footer onderaan.`, { regel: 'Ontwerpbasis: geen lege strook onder de footer (besluit 175)' });
+    }
   }
 
   // Lettergrootte per rol (sinds meetserver 0.4.0, besluit 177): per rol de voorkomende groottes, zodat de plugin

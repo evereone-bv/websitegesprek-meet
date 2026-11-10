@@ -119,7 +119,10 @@ function validateJob(job) {
   const pages = Array.isArray(job.pages) ? job.pages : [];
   const widths = Array.isArray(job.widths) && job.widths.length ? job.widths.map(Number) : [390, 768, 1440];
   const selectors = Array.isArray(job.selectors) ? job.selectors.map(String) : [];
-  const actions = Array.isArray(job.actions) ? job.actions : [];
+  // Sinds 0.4.1: ook {action|actie: 'click', element: '...'} accepteren (Claude gebruikte soms die namen).
+  const actions = (Array.isArray(job.actions) ? job.actions : []).map((a) => (a && typeof a === 'object'
+    ? { type: String(a.type || a.action || a.actie || '').toLowerCase(), selector: a.selector || a.element || a.doel || undefined }
+    : a));
   if (!pages.length || pages.length > LIMITS.pages) throw new JobError('ongeldige_opdracht', `Geef 1 tot ${LIMITS.pages} pagina's.`);
   if (widths.length > LIMITS.widths || widths.some((w) => !ALLOWED_WIDTHS.includes(w))) throw new JobError('ongeldige_opdracht', `Schermbreedtes: maximaal ${LIMITS.widths} uit ${ALLOWED_WIDTHS.join(', ')}.`);
   if (pages.length * widths.length > LIMITS.loads) throw new JobError('ongeldige_opdracht', `Maximaal ${LIMITS.loads} metingen per opdracht.`);
@@ -140,7 +143,11 @@ function validateJob(job) {
     if (w.some((x) => !VOOR_NA.widths.includes(x))) throw new JobError('ongeldige_opdracht', `Vóór/na: schermbreedtes ${VOOR_NA.widths.join(' en ')}.`);
     return { pages, widths: w, selectors: [], actions: [], engine: 'chromium', shot: true, allowed: job.allowed_hosts || [], voorNa: true };
   }
-  return { pages, widths, selectors, actions, engine, shot: job.shot !== false, allowed: job.allowed_hosts || [] };
+  // Sinds 0.4.1: een pagina die bewust een foutstatus geeft (zoals de 404-pagina) toch meten; en op een hoog scherm
+  // meten om een lege strook onder de footer te zien (besluit 175).
+  const verwacht = Number(job.verwachte_status) || 0;
+  if (verwacht && (verwacht < 400 || verwacht > 499)) throw new JobError('ongeldige_opdracht', 'verwachte_status: alleen 400 tot en met 499 (bijv. 404).');
+  return { pages, widths, selectors, actions, engine, shot: job.shot !== false, allowed: job.allowed_hosts || [], verwacht, hoog: !!job.hoog };
 }
 
 function withCacheBuster(url) {
@@ -221,7 +228,7 @@ export async function runJob(job, env = {}) {
 async function measureOne(browser, target, width, v, env) {
   const mobile = width < 600;
   const context = await browser.newContext({
-    viewport: { width, height: mobile ? 844 : 900 },
+    viewport: { width, height: v.hoog ? (mobile ? 1200 : 1400) : (mobile ? 844 : 900) },
     deviceScaleFactor: 1,
     isMobile: mobile && v.engine === 'chromium',
     hasTouch: mobile,
@@ -280,7 +287,7 @@ async function measureOne(browser, target, width, v, env) {
     out.laadtijd_ms = Date.now() - t0;
     out.status = resp ? resp.status() : 0;
     out.eind_adres = page.url().replace(/([?&])wg_vers=\d+&?/, '$1').replace(/[?&]$/, '');
-    if (out.status >= 400) {
+    if (out.status >= 400 && out.status !== v.verwacht) {
       out.fout = `De pagina gaf status ${out.status}.`;
       return out;
     }

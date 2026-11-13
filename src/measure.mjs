@@ -132,6 +132,15 @@ function validateJob(job) {
     if (!a || !['menu', 'click', 'focus', 'hover'].includes(a.type)) throw new JobError('ongeldige_opdracht', 'Acties: menu, click, focus of hover.');
     if (a.type !== 'menu' && (!a.selector || String(a.selector).length > 200)) throw new JobError('ongeldige_opdracht', 'Actie zonder geldige selector.');
   }
+  // Sinds 0.4.3 (besluit 332): een concept meet je met een eenmalig token in de kop X-WG-Meet in plaats van in het
+  // adres, zodat het niet in de serverlogs van de site komt. De plugin stuurt dan url_kop (adres zonder token) en kop.
+  for (const p of pages) {
+    if (p && p.kop !== undefined) {
+      if (!/^[A-Za-z0-9_-]{40,64}$/.test(String(p.kop)) || !p.url_kop) throw new JobError('ongeldige_opdracht', 'Concept: ongeldig token of adres.');
+      p.url = String(p.url_kop);
+      p.kop = String(p.kop);
+    }
+  }
   const engine = job.engine === 'webkit' ? 'webkit' : 'chromium';
   if (job.doel === 'volgcodes') {
     if (pages.length > VOLGCODES.pages) throw new JobError('ongeldige_opdracht', `Volgcodes: maximaal ${VOLGCODES.pages} pagina's.`);
@@ -201,7 +210,7 @@ export async function runJob(job, env = {}) {
   for (const p of v.pages) {
     const { url, host } = checkUrl(p.url, v.allowed, { allowHttp: env.allowHttp });
     if (!pins.has(host)) pins.set(host, await resolvePublic(host, { allowPrivate: env.allowPrivate }));
-    targets.push({ url, host, label: p.label ? String(p.label).slice(0, 20) : '' });
+    targets.push({ url, host, label: p.label ? String(p.label).slice(0, 20) : '', kop: p.kop || '' });
   }
   const args = [];
   const rules = [...pins].filter(([, ip]) => isPublicIp(ip)).map(([h, ip]) => `MAP ${h} ${ip}`);
@@ -249,6 +258,11 @@ async function measureOne(browser, target, width, v, env) {
     let u;
     try { u = new URL(req.url()); } catch { return route.abort(); }
     if (!['http:', 'https:', 'data:', 'blob:'].includes(u.protocol)) return route.abort();
+    // Besluit 332: bij een concept geen enkel verzoek naar een ander domein (volgcodes en dergelijke zien het adres niet).
+    if (target.kop && ['http:', 'https:'].includes(u.protocol) && !allowedHosts.includes(u.hostname.toLowerCase())) {
+      blocked.push(`${u.hostname} (concept: geen andere domeinen)`);
+      return route.abort();
+    }
     if (v.volgcodes) {
       const dienst = volgDienst(u);
       if (dienst) {
@@ -267,7 +281,10 @@ async function measureOne(browser, target, width, v, env) {
       if (!allowedHosts.includes(u.hostname.toLowerCase())) { blocked.push(`doorverwijzing naar ${u.hostname}`); return route.abort(); }
       // Doorverwijzingen zelf controleren: alleen binnen de toegestane domeinen.
       let resp;
-      try { resp = await route.fetch({ maxRedirects: 0, timeout: LIMITS.pageTimeoutMs }); } catch { return route.abort(); }
+      // Besluit 332: het token alleen in de kop van het hoofddocument, alleen naar het eigen domein.
+      const opts = { maxRedirects: 0, timeout: LIMITS.pageTimeoutMs };
+      if (target.kop) opts.headers = { ...req.headers(), 'x-wg-meet': target.kop };
+      try { resp = await route.fetch(opts); } catch { return route.abort(); }
       const st = resp.status();
       if (st >= 300 && st < 400) {
         let next;

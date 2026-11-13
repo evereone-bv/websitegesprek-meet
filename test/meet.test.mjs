@@ -24,6 +24,13 @@ const PIXEL_BODY = "!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){
 const PIXEL = `<script>${PIXEL_BODY}</script>`;
 const html = (body, extraHead = '') => `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<style>body{margin:0;font-family:sans-serif}</style></head><body>${body}</body></html>`;
 const pages = {
+  // Sinds 0.4.2 (besluit 369): ankers op de kop, en een vaste kop die de sectiekop na springen bedekt.
+  '/ankers': html(`<header style="position:sticky;top:0;height:80px;background:#fff;width:100%">Kop</header>
+     <nav><a href="#goed">Goed</a> <a href="#tekst">Tekst</a> <a href="#sectie">Sectie</a> <a href="#marge">Marge</a></nav>
+     <h2 id="goed">Goede kop</h2><p style="height:800px">x</p>
+     <h2>Kop boven tekst</h2><p id="tekst" style="height:800px">anker op de tekst</p>
+     <section id="sectie" style="scroll-margin-top:80px"><h2>Sectie met kop</h2><p style="height:800px">y</p></section>
+     <h2 id="marge" style="scroll-margin-top:96px">Kop met marge</h2><p style="height:800px">z</p>`),
   '/contact-fout': html(STD + block(true)),
   '/contact-goed': html(STD + block(false)),
   '/en/contact-goed': html(STD + block(false, 40)),
@@ -82,6 +89,13 @@ function startFixture() {
     const p = req.url.split('?')[0];
     fixtureHits.push(`${req.method} ${p}`);
     if (p === '/naar-buiten') { res.writeHead(302, { Location: 'http://voorbeeld.invalid/' }); return res.end(); }
+    if (p === '/concept') {
+      const ok = req.headers['x-wg-meet'] === 'T'.repeat(43);
+      fixtureHits.push(`concept ${ok ? 'met' : 'zonder'} token ${req.url.includes('T'.repeat(10)) ? 'in adres' : ''}`);
+      res.writeHead(ok ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(ok ? html(`<h1>Concept</h1><img src="/plaatje.png" width="10" height="10"><img src="http://andere.invalid/volg.png" width="1" height="1">`) : 'nee');
+    }
+    if (p === '/plaatje.png') { fixtureHits.push(`plaatje ${req.headers['x-wg-meet'] ? 'met' : 'zonder'} token`); res.writeHead(404); return res.end(); }
     if (p === '/fout') { res.writeHead(500); return res.end('kapot'); }
     if (pages[p]) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(pages[p]); }
     res.writeHead(404); res.end('nee');
@@ -416,6 +430,14 @@ test('lege strook onder de footer op een korte pagina, gemeten op een hoog scher
   const f = r.json.metingen[0].meldingen.filter((x) => x.code === 'lege_strook_onder_footer');
   assert.ok(f.length === 1 && /scherm 1400 px hoog/.test(f[0].melding), JSON.stringify(r.json.metingen[0].meldingen));
 });
+test('ankers: niet op de kop gemeld; kop onder de vaste kop gemeld; met scroll-margin-top niet (besluit 369)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/ankers` }], widths: [1440], shot: false });
+  const m = r.json.metingen[0].meldingen;
+  const niet = m.filter((x) => x.code === 'anker_niet_op_kop');
+  const onder = m.filter((x) => x.code === 'kop_onder_vaste_kop');
+  assert.ok(niet.length === 1 && /#tekst/.test(niet[0].melding), JSON.stringify(niet));
+  assert.ok(onder.length === 1 && /#goed/.test(onder[0].melding) && /80px/.test(onder[0].melding), JSON.stringify(onder));
+});
 test('404-pagina meten met verwachte_status (besluit 175)', async () => {
   const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/bestaat-niet` }], widths: [390], shot: false, verwachte_status: 404 });
   assert.equal(r.json.metingen[0].status, 404);
@@ -428,4 +450,18 @@ test('dichtgeklapte vragen geven geen overloop; klikken met action/element werkt
   assert.ok(!r.json.metingen[0].meldingen.some((x) => x.code === 'overloop'), JSON.stringify(r.json.metingen[0].meldingen));
   const k = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/knoppen` }], widths: [1440], shot: false, actions: [{ action: 'click', element: 'summary.s' }] });
   assert.ok(k.json.metingen[0].acties[0].gedaan, JSON.stringify(k.json.metingen[0].acties));
+});
+
+test('concept: token in de kop X-WG-Meet, niet in het adres; geen andere domeinen (besluit 332)', async () => {
+  fixtureHits = [];
+  const tok = 'T'.repeat(43);
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?wg_meet=${tok}&p=1`, url_kop: `${base}/concept?wg_meet=kop&p=1`, kop: tok }], widths: [390], shot: false });
+  const m = r.json.metingen[0];
+  assert.equal(m.status, 200, JSON.stringify(m));
+  assert.ok(fixtureHits.includes('concept met token ') && !fixtureHits.some((h) => /in adres/.test(h)), JSON.stringify(fixtureHits));
+  assert.ok(fixtureHits.includes('plaatje zonder token'), 'token alleen bij het hoofddocument: ' + JSON.stringify(fixtureHits));
+  assert.ok((m.tegengehouden || []).some((x) => /andere\.invalid \(concept/.test(x)), JSON.stringify(m.tegengehouden));
+  assert.ok(!JSON.stringify(r.json).includes(tok), 'token niet in het antwoord');
+  const z = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?p=1`, url_kop: `${base}/concept?p=1`, kop: 'kort' }], widths: [390], shot: false });
+  assert.equal(z.status, 400);
 });

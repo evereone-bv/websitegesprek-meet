@@ -392,5 +392,46 @@ function wgProbe(opts) {
     add('icoon_niet_gecentreerd', melding, { regel: 'Ontwerpbasis: iconen exact gecentreerd, getekend en niet als letterteken (besluit 181)' });
   }
 
+  // Sinds 0.4.2 (besluit 369): ankers (doel van een link als #wensgesprek) staan op de kop van de sectie, en een vaste
+  // (sticky) kop mag de sectiekop na het springen niet bedekken.
+  {
+    const isKop = (el) => /^H[1-6]$/.test(el.tagName);
+    const ids = new Set();
+    for (const a of document.querySelectorAll('a[href*="#"]')) {
+      let u;
+      try { u = new URL(a.getAttribute('href'), location.href); } catch (e) { continue; }
+      if (u.pathname !== location.pathname || !u.hash || u.hash.length < 2) continue;
+      ids.add(decodeURIComponent(u.hash.slice(1)));
+    }
+    // Vaste kop bovenaan: positie fixed of sticky, bovenaan, minstens de halve schermbreedte, niet hoger dan 40% van het scherm.
+    let vast = 0;
+    for (const el of document.querySelectorAll('header, .site-header, [role=banner], .elementor-sticky, nav')) {
+      if (!visible(el)) continue;
+      const cs = getComputedStyle(el);
+      if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+      const r = el.getBoundingClientRect();
+      if (px(cs.top) <= 1 && r.width >= vw / 2 && r.height < window.innerHeight * 0.4) vast = Math.max(vast, R(r.height));
+    }
+    const padTop = px(getComputedStyle(document.documentElement).scrollPaddingTop);
+    for (const id of ids) {
+      const doel = document.getElementById(id);
+      if (!doel || !visible(doel) || doel === document.body) continue;
+      let kop = isKop(doel) ? doel : null;
+      if (!kop) {
+        const eerste = [...doel.querySelectorAll('h1,h2,h3,h4,h5,h6')].find(visible);
+        if (eerste && eerste.getBoundingClientRect().top - doel.getBoundingClientRect().top <= 100) kop = eerste;
+      }
+      if (!kop) {
+        add('anker_niet_op_kop', `Anker #${id} staat op ${label(doel)}, niet op de kop van de sectie. Wie op de link klikt, komt onder de kop uit. Zet het id op de kop (of op de sectie met de kop bovenaan).`, { regel: "Ontwerpbasis: 'Ankers op de kop' (besluit 369)" });
+        continue;
+      }
+      if (vast > 0) {
+        const marge = px(getComputedStyle(doel).scrollMarginTop) + padTop;
+        const verschil = R(vast - marge - (kop.getBoundingClientRect().top - doel.getBoundingClientRect().top));
+        if (verschil > 1) add('kop_onder_vaste_kop', `Na springen naar #${id} valt de kop ${verschil} px onder de vaste kop van de site (${vast} px hoog). Zet scroll-margin-top: ${Math.ceil(vast)}px op het anker.`, { regel: "Ontwerpbasis: 'Ankers op de kop' (besluit 369)" });
+      }
+    }
+  }
+
   return { schermbreedte: vw, paginabreedte: docW, standaardknop: standaardKnop, blokken: elements, meldingen: findings, lettergroottes };
 }

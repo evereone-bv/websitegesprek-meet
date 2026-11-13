@@ -134,7 +134,7 @@ export function createServer(cfg) {
     } catch (e) {
       const known = e instanceof JobError || e instanceof GuardError;
       const status = known ? (e.code === 'druk' ? 503 : 400) : 500;
-      log({ route: path, status, code: e.code || 'fout', ms: Date.now() - t0, fout: known ? undefined : String(e.message).slice(0, 200) });
+      log({ route: path, status, code: e.code || 'fout', ms: Date.now() - t0, fout: known ? undefined : String(e.message).replace(/wg_meet=[^&\s"']*/g, 'wg_meet=[weg]').slice(0, 200) });
       if (!res.headersSent) {
         return sendSigned(res, status, { ok: false, code: e.code || 'fout', melding: known ? e.message : 'Er ging iets mis op de meetserver.' }, String(req.headers['x-wg-nonce'] || ''));
       }

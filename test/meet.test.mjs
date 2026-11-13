@@ -89,6 +89,13 @@ function startFixture() {
     const p = req.url.split('?')[0];
     fixtureHits.push(`${req.method} ${p}`);
     if (p === '/naar-buiten') { res.writeHead(302, { Location: 'http://voorbeeld.invalid/' }); return res.end(); }
+    if (p === '/concept') {
+      const ok = req.headers['x-wg-meet'] === 'T'.repeat(43);
+      fixtureHits.push(`concept ${ok ? 'met' : 'zonder'} token ${req.url.includes('T'.repeat(10)) ? 'in adres' : ''}`);
+      res.writeHead(ok ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(ok ? html(`<h1>Concept</h1><img src="/plaatje.png" width="10" height="10"><img src="http://andere.invalid/volg.png" width="1" height="1">`) : 'nee');
+    }
+    if (p === '/plaatje.png') { fixtureHits.push(`plaatje ${req.headers['x-wg-meet'] ? 'met' : 'zonder'} token`); res.writeHead(404); return res.end(); }
     if (p === '/fout') { res.writeHead(500); return res.end('kapot'); }
     if (pages[p]) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(pages[p]); }
     res.writeHead(404); res.end('nee');
@@ -443,4 +450,18 @@ test('dichtgeklapte vragen geven geen overloop; klikken met action/element werkt
   assert.ok(!r.json.metingen[0].meldingen.some((x) => x.code === 'overloop'), JSON.stringify(r.json.metingen[0].meldingen));
   const k = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/knoppen` }], widths: [1440], shot: false, actions: [{ action: 'click', element: 'summary.s' }] });
   assert.ok(k.json.metingen[0].acties[0].gedaan, JSON.stringify(k.json.metingen[0].acties));
+});
+
+test('concept: token in de kop X-WG-Meet, niet in het adres; geen andere domeinen (besluit 332)', async () => {
+  fixtureHits = [];
+  const tok = 'T'.repeat(43);
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?wg_meet=${tok}&p=1`, url_kop: `${base}/concept?wg_meet=kop&p=1`, kop: tok }], widths: [390], shot: false });
+  const m = r.json.metingen[0];
+  assert.equal(m.status, 200, JSON.stringify(m));
+  assert.ok(fixtureHits.includes('concept met token ') && !fixtureHits.some((h) => /in adres/.test(h)), JSON.stringify(fixtureHits));
+  assert.ok(fixtureHits.includes('plaatje zonder token'), 'token alleen bij het hoofddocument: ' + JSON.stringify(fixtureHits));
+  assert.ok((m.tegengehouden || []).some((x) => /andere\.invalid \(concept/.test(x)), JSON.stringify(m.tegengehouden));
+  assert.ok(!JSON.stringify(r.json).includes(tok), 'token niet in het antwoord');
+  const z = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?p=1`, url_kop: `${base}/concept?p=1`, kop: 'kort' }], widths: [390], shot: false });
+  assert.equal(z.status, 400);
 });

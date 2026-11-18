@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { runJob, JobError } from './measure.mjs';
 import { GuardError } from './guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, MAX_SKEW_S, message, sign, verify, publicKeyFromRaw, loadOrCreateServerKey, NonceCache } from './keys.mjs';
+import { createBewaking, smtpMail } from './bewaking.mjs';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.5.0';
 
 export function createServer(cfg) {
   const clientKeys = cfg.clientKeys.map(publicKeyFromRaw);
@@ -49,6 +50,10 @@ export function createServer(cfg) {
 
   const log = (o) => { if (!cfg.quiet) console.log(JSON.stringify({ t: new Date().toISOString(), ...o })); };
 
+  // Sinds 0.5.0 (besluiten 481 en 506): bewaking in hetzelfde proces, dus in de container achter de firewall (V13),
+  // buiten de rij van metingen (V16). Standaard uit (V14).
+  const bewaking = createBewaking({ ...cfg.bewaking, serverKey, clientKeys, allowPrivate: cfg.allowPrivate, allowHttp: cfg.allowHttp }, log);
+
   const sendSigned = (res, status, obj, nonce) => {
     const body = Buffer.from(JSON.stringify(obj));
     const ts = String(Math.floor(Date.now() / 1000));
@@ -74,7 +79,7 @@ export function createServer(cfg) {
     req.on('error', reject);
   });
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const t0 = Date.now();
     const path = (req.url || '').split('?')[0];
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -82,7 +87,7 @@ export function createServer(cfg) {
     try {
       if (req.method === 'GET' && path === '/healthz') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, versie: VERSION, bezig: running, wachtrij: queue.length }));
+        return res.end(JSON.stringify({ ok: true, versie: VERSION, bezig: running, wachtrij: queue.length, bewaking: bewaking.stand() }));
       }
       if (req.method === 'GET' && path === '/v1/pubkey') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -141,6 +146,8 @@ export function createServer(cfg) {
       res.end();
     }
   });
+  server.bewaking = bewaking;
+  return server;
 }
 
 export function configFromEnv(env = process.env) {
@@ -162,6 +169,19 @@ export function configFromEnv(env = process.env) {
     // Teststand: volgdiensten nooit echt benaderen (kleine nabootsing in plaats van het echte script).
     trackerStub: env.MEET_TEST_ALLOW_PRIVATE === '1',
     volgWaitMs: env.MEET_TEST_ALLOW_PRIVATE === '1' && env.MEET_VOLG_WAIT_MS ? Number(env.MEET_VOLG_WAIT_MS) : undefined,
+    // Sinds 0.5.0 (besluiten 481 en 506). Alles uit tenzij BEWAKING_AAN=1 (V14).
+    bewaking: {
+      aan: env.BEWAKING_AAN === '1',
+      rapportage: (env.BEWAKING_RAPPORTAGE || 'https://rapportage.websitegesprek.nl').replace(/\/$/, ''),
+      eigen: (env.BEWAKING_EIGEN || 'https://rapportage.websitegesprek.nl/wp-json/,https://reserve.websitegesprek.nl/wp-json/,https://updates.websitegesprek.nl/klant.json').split(',').map((u) => u.trim()).filter(Boolean),
+      timeoutMs: 5000,
+      siteBudgetMs: 15000,
+      rondeBudgetMs: 240000,
+      tegelijk: 20,
+      mailer: env.BEWAKING_SMTP_HOST && env.BEWAKING_MAIL_VAN && env.BEWAKING_MAIL_AAN
+        ? (onderwerp, tekst) => smtpMail({ host: env.BEWAKING_SMTP_HOST, van: env.BEWAKING_MAIL_VAN, aan: env.BEWAKING_MAIL_AAN, onderwerp, tekst })
+        : null,
+    },
   };
 }
 
@@ -169,5 +189,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const cfg = configFromEnv();
   if (!cfg.clientKeys.length) console.warn('Let op: geen openbare sleutels van rapportage in config/clients.json; elke opdracht wordt geweigerd.');
   if (cfg.allowPrivate) console.warn('TESTSTAND: interne adressen en http toegestaan. Nooit in productie.');
-  createServer(cfg).listen(cfg.port, cfg.host, () => console.log(`Meetserver ${VERSION} luistert op ${cfg.host}:${cfg.port}`));
+  const srv = createServer(cfg);
+  srv.listen(cfg.port, cfg.host, () => console.log(`Meetserver ${VERSION} luistert op ${cfg.host}:${cfg.port}`));
+  if (srv.bewaking.start()) console.log('Bewaking aan: elke 5 minuten, sites volgens de ondertekende lijst van rapportage.');
 }

@@ -57,11 +57,15 @@ Requires=docker.service meet-firewall.service
 [Service]
 Restart=always
 RestartSec=5
+# Sinds 0.5.0 (besluiten 481 en 506): instellingen van de bewaking, standaard uit. Geen geheimen: de SMTP-relay van
+# Google Workspace controleert het IP-adres van deze server. Voorbeeld in README.md.
+EnvironmentFile=-/etc/meet/bewaking.env
 ExecStartPre=-/usr/bin/docker rm -f meet
 ExecStart=/usr/bin/docker run --rm --name meet --network meetnet -p 127.0.0.1:8080:8080 \\
   --shm-size=1g --memory=3g --pids-limit=1024 --cap-drop=ALL \\
   --security-opt seccomp=$DIR/deploy/seccomp_profile.json \\
-  -v meetdata:/data -e MEET_PUBLIC_BASE=https://meet.websitegesprek.nl $IMAGE
+  -v meetdata:/data -e MEET_PUBLIC_BASE=https://meet.websitegesprek.nl \\
+  -e BEWAKING_AAN -e BEWAKING_RAPPORTAGE -e BEWAKING_EIGEN -e BEWAKING_SMTP_HOST -e BEWAKING_MAIL_VAN -e BEWAKING_MAIL_AAN $IMAGE
 ExecStop=/usr/bin/docker stop -t 20 meet
 [Install]
 WantedBy=multi-user.target

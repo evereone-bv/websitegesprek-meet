@@ -9,7 +9,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { isPublicIp, checkUrl, resolvePublic } from '../src/guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, message, sign, verify, publicKeyFromRaw, rawPublicKey } from '../src/keys.mjs';
-import { createServer } from '../src/server.mjs';
+import { createServer, VERSION } from '../src/server.mjs';
 import { volgDienst, volgCookie } from '../src/measure.mjs';
 
 // ---------- testpagina's ----------
@@ -401,7 +401,7 @@ test('volgcodes: maximaal 3 pagina\'s, één breedte, geen selectors/acties; mee
   assert.equal(a.status, 400);
   const b = await call(meet, { doel: 'volgcodes', allowed_hosts: ['localhost'], pages: [{ url: `${base}/volg-direct` }, { url: `${base}/volg-textplain` }], actions: [{ type: 'click', selector: '#wg-akkoord' }], selectors: ['#wg-akkoord'] });
   assert.equal(b.status, 200);
-  assert.equal(b.json.versie, '0.3.0');
+  assert.equal(b.json.versie, VERSION); // sinds 0.5.0 niet meer vast 0.3.0
   assert.equal(b.json.metingen.length, 2);
   assert.deepEqual(b.json.metingen.map((m) => m.volgcodes.diensten), [['Meta-pixel'], []]);
   assert.equal(b.json.metingen[0].acties, undefined, 'niets aangeklikt');

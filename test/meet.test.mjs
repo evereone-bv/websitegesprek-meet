@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { isPublicIp, checkUrl, resolvePublic } from '../src/guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, message, sign, verify, publicKeyFromRaw, rawPublicKey } from '../src/keys.mjs';
 import { createServer, VERSION } from '../src/server.mjs';
-import { volgDienst, volgCookie } from '../src/measure.mjs';
+import { volgDienst, volgCookie, formulierenAan, formulierOpties, runJob } from '../src/measure.mjs';
 
 // ---------- testpagina's ----------
 const BTN = 'background:#9e583f;color:#fff;border-radius:8px;padding:24px 29px;font:18px/18px sans-serif;text-decoration:none';
@@ -23,6 +23,10 @@ const block = (inline, pad = 48) => `<div class="ph-contact" style="display:flex
 const PIXEL_BODY = "!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.queue.push(arguments)};n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1234567890');fbq('track','PageView');";
 const PIXEL = `<script>${PIXEL_BODY}</script>`;
 const html = (body, extraHead = '') => `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<style>body{margin:0;font-family:sans-serif}</style></head><body>${body}</body></html>`;
+const FORM_628 = '<form class="wgf" action="#" novalidate><div class="wgf-kaart"><label class="wgf-l" for="kvk">KvK-nummer</label><input type="text" id="kvk" name="kvk" placeholder="8 cijfers" value="Jan Jansen"><button type="button" class="wgf-knop">Zoek mijn bedrijf</button><label class="wgf-vink"><input type="checkbox" name="akkoord"><span>Ik ga akkoord met de voorwaarden.</span></label><button type="submit" class="wgf-knop">Start mijn proef</button></div></form>';
+// Sinds 0.5.2 (besluit 631): het formulier van concept 628 zonder zijn CSS (kaal, zoals vóór werkbon wb-261123-205544-2SAB)
+// en met opmaak in de huisstijl. Het formulier staat bewust buiten de selectors.
+const FORM_CSS = '<style>.wgf input[type=text]{display:block;width:100%;box-sizing:border-box;height:48px;padding:0 14px;border:1px solid #c9c4b8;border-radius:8px;background:#fff;font:17px sans-serif}.wgf-knop{display:block;height:48px;margin-top:12px;padding:0 24px;border:0;border-radius:8px;background:#F2B33D;color:#0E1B2C;font:600 17px sans-serif}.wgf-vink input{accent-color:#0E1B2C;width:22px;height:22px}</style>';
 const pages = {
   // Sinds 0.4.2 (besluit 369): ankers op de kop, en een vaste kop die de sectiekop na springen bedekt.
   '/ankers': html(`<header style="position:sticky;top:0;height:80px;background:#fff;width:100%">Kop</header>
@@ -32,6 +36,19 @@ const pages = {
      <section id="sectie" style="scroll-margin-top:80px"><h2>Sectie met kop</h2><p style="height:800px">y</p></section>
      <h2 id="marge" style="scroll-margin-top:96px">Kop met marge</h2><p style="height:800px">z</p>`),
   '/contact-fout': html(STD + block(true)),
+  '/formulier-kaal': html(`<div class="intro"><p>Aanmelden</p></div>${FORM_628}`),
+  '/formulier-laag': html('<form class="laag" action="#"><input type="text" style="height:36px;border:1px solid #333;border-radius:6px;padding:0 8px"><button type="submit" style="height:36px;border:0;border-radius:6px;background:#0E1B2C;color:#fff;padding:0 16px">Verstuur</button></form>'),
+  // Review 631 V1: honeypot buiten beeld en screen-reader-veld van 1 x 1 met clip tellen niet; het kale zichtbare veld wel.
+  '/formulier-verborgen': html(`<form action="#"><div style="position:absolute;left:-9999px"><input type="text" name="hp_website"></div>
+     <input type="text" name="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
+     <span style="position:absolute;clip-path:inset(50%)"><input type="text" name="geknipt"></span>
+     <input type="text" name="zichtbaar" placeholder="Je naam"></form>`),
+  // Review 631 V2: 310 verborgen velden vóór één kaal veld; en 301 zichtbare opgemaakte velden.
+  '/formulier-veel-verborgen': html(`<form action="#">${'<input type="hidden" name="h">'.repeat(310)}<input type="text" name="echt" placeholder="Echt veld"></form>`),
+  '/formulier-veel-zichtbaar': html(`<form action="#">${'<input type="text" style="border:1px solid #333;border-radius:6px;height:48px;padding:0 8px">'.repeat(301)}</form>`),
+  // Review 631 V4: een pagina die getAttribute van velden kapotmaakt: alleen de formuliercontrole valt uit.
+  '/formulier-kapot': html('<h2>Kop</h2><p class="x">Tekst</p><form action="#"><input type="text"></form><script>HTMLInputElement.prototype.getAttribute=function(){throw new Error("kapot")}</script>'),
+  '/formulier-goed': html(`<div class="intro"><p>Aanmelden</p></div>${FORM_628}${FORM_CSS}`),
   '/contact-goed': html(STD + block(false)),
   '/en/contact-goed': html(STD + block(false, 40)),
   '/breed': html('<div class="breed" style="width:600px;height:50px;background:#eee">breed</div>'),
@@ -464,4 +481,92 @@ test('concept: token in de kop X-WG-Meet, niet in het adres; geen andere domeine
   assert.ok(!JSON.stringify(r.json).includes(tok), 'token niet in het antwoord');
   const z = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?p=1`, url_kop: `${base}/concept?p=1`, kop: 'kort' }], widths: [390], shot: false });
   assert.equal(z.status, 400);
+});
+
+test('kale formulieronderdelen op de hele pagina, ook buiten de selectors: concept 628 vóór de herstelwerkbon (besluit 631)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-kaal` }, { url: `${base}/formulier-goed` }], widths: [390, 1440], selectors: ['.intro'], shot: false });
+  assert.equal(r.status, 200, JSON.stringify(r.json).slice(0, 300));
+  const [kaal390, kaal1440, goed390, goed1440] = r.json.metingen;
+  for (const m of [kaal390, kaal1440]) {
+    const kaal = m.meldingen.filter((f) => f.code === 'formulier_kaal');
+    assert.ok(kaal.some((f) => /^1 invoerveld/.test(f.melding) && /input "8 cijfers"/.test(f.melding)), JSON.stringify(m.meldingen));
+    assert.ok(!JSON.stringify(m).includes('Jan Jansen'), 'ingevulde waarde van een veld komt nooit in het antwoord');
+    assert.ok(kaal.some((f) => /^2 knop\(pen\)/.test(f.melding) && /Zoek mijn bedrijf/.test(f.melding)), JSON.stringify(m.meldingen));
+    assert.ok(kaal.some((f) => /^1 vinkje/.test(f.melding)), JSON.stringify(m.meldingen));
+    assert.equal(m.formulieren.gecontroleerd, true);
+    assert.equal(m.formulieren.kaal, 4);
+  }
+  for (const m of [goed390, goed1440]) {
+    assert.deepEqual(m.meldingen.filter((f) => f.code.startsWith('formulier_')), [], JSON.stringify(m.meldingen));
+    assert.equal(m.formulieren.kaal, 0);
+  }
+});
+test('formulier op mobiel: veld met eigen opmaak maar lager dan 44 px wordt gemeld; op desktop niet (besluit 631)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-laag` }], widths: [390, 1440], shot: false });
+  const [mob, desk] = r.json.metingen;
+  assert.ok(mob.meldingen.some((f) => f.code === 'formulier_te_laag' && /^2 /.test(f.melding)), JSON.stringify(mob.meldingen));
+  assert.ok(!desk.meldingen.some((f) => f.code === 'formulier_te_laag'), JSON.stringify(desk.meldingen));
+  assert.ok(!mob.meldingen.some((f) => f.code === 'formulier_kaal'), JSON.stringify(mob.meldingen));
+});
+const WEBKIT = (() => { try { const d = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), '.cache', 'ms-playwright'); return fs.readdirSync(d).some((x) => x.startsWith('webkit')); } catch { return false; } })();
+test('formulieren in webkit: standaardopmaak van webkit zelf, kaal formulier gemeld (besluit 631)', { skip: !WEBKIT && 'webkit niet geïnstalleerd' }, async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-kaal` }], widths: [390], engine: 'webkit', shot: false });
+  assert.equal(r.status, 200, JSON.stringify(r.json).slice(0, 300));
+  const m = r.json.metingen[0];
+  assert.equal(m.formulieren.gecontroleerd, true, JSON.stringify(m.formulieren));
+  assert.ok(m.meldingen.some((f) => f.code === 'formulier_kaal'), JSON.stringify(m.meldingen));
+});
+test('formulieren eerst alleen in de proefgroep: eigen sites aan, klantsites uit, teststand aan (besluit 631)', () => {
+  assert.equal(formulierenAan('websitegesprek.nl'), true);
+  assert.equal(formulierenAan('www.evereone.nl'), true);
+  assert.equal(formulierenAan('test.websitegesprek.nl'), true);
+  assert.equal(formulierenAan('puglia-houses.com'), false);
+  assert.equal(formulierenAan('localhost', { allowPrivate: true }), true);
+});
+test('formulieren: honeypot buiten beeld en weggeknipte velden niet gemeld, zichtbaar kaal veld wel (Review 631 V1)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-verborgen` }], widths: [390], shot: false });
+  const m = r.json.metingen[0];
+  const kaal = m.meldingen.filter((f) => f.code === 'formulier_kaal');
+  assert.equal(kaal.length, 1, JSON.stringify(m.meldingen));
+  assert.match(kaal[0].melding, /^1 invoerveld\(en\).*input "Je naam"/);
+  assert.doesNotMatch(kaal[0].melding, /hp_website|"sr"|geknipt/);
+  assert.equal(m.formulieren.onderdelen, 1);
+});
+test('formulieren: verborgen velden tellen niet mee voor de grens; boven de grens afgekapt = true (Review 631 V2)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-veel-verborgen` }, { url: `${base}/formulier-veel-zichtbaar` }], widths: [1440], shot: false });
+  const [verborgen, zichtbaar] = r.json.metingen;
+  assert.ok(verborgen.meldingen.some((f) => f.code === 'formulier_kaal' && /Echt veld/.test(f.melding)), JSON.stringify(verborgen.formulieren));
+  assert.equal(verborgen.formulieren.afgekapt, false);
+  assert.equal(zichtbaar.formulieren.afgekapt, true, JSON.stringify(zichtbaar.formulieren));
+  assert.equal(zichtbaar.formulieren.onderdelen, 300);
+});
+test('formulieren: standaard lezen faalt of hangt: metingen komen terug met reden, hooguit 7 s langer (Review 631 V3)', async () => {
+  const job = { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-kaal` }], widths: [390, 1440], shot: false };
+  const env = { allowPrivate: true, allowHttp: true };
+  const t0 = Date.now();
+  const gewoon = await runJob(job, env);
+  const tGewoon = Date.now() - t0;
+  for (const testStandaard of ['traag', 'fout']) {
+    const t1 = Date.now();
+    const r = await runJob(job, { ...env, testStandaard });
+    assert.ok(Date.now() - t1 - tGewoon <= 7000, `${testStandaard}: ${Date.now() - t1} ms tegen ${tGewoon} ms`);
+    for (const m of r.metingen) {
+      assert.ok(Array.isArray(m.meldingen) && m.lettergroottes, JSON.stringify(m).slice(0, 300));
+      assert.deepEqual(m.formulieren, { gecontroleerd: false, reden: 'standaardopmaak niet gelezen' });
+    }
+  }
+  assert.equal(gewoon.metingen[0].formulieren.gecontroleerd, true);
+});
+test('formulieren: buiten de proefgroep reden "niet in proefgroep", zonder standaard "standaardopmaak niet gelezen" (Review 631 V3)', () => {
+  const st = new Map([[true, { tekst: {} }]]);
+  assert.deepEqual(formulierOpties({ standaard: st }, 'klant.nl', {}, true), { standaard: null, formulierReden: 'niet in proefgroep' });
+  assert.deepEqual(formulierOpties({ standaard: null }, 'websitegesprek.nl', {}, true), { standaard: null, formulierReden: 'standaardopmaak niet gelezen' });
+  assert.deepEqual(formulierOpties({ standaard: st }, 'websitegesprek.nl', {}, true), { standaard: { tekst: {} }, formulierReden: '' });
+});
+test('formulieren: fout in de controle kost de rest van de meting niet (Review 631 V4)', async () => {
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/formulier-kapot` }], widths: [390], selectors: ['.x'], shot: false });
+  const m = r.json.metingen[0];
+  assert.equal(m.fout, undefined, JSON.stringify(m).slice(0, 300));
+  assert.ok(m.blokken[0].gevonden);
+  assert.deepEqual(m.formulieren, { gecontroleerd: false, reden: 'fout in de controle' });
 });

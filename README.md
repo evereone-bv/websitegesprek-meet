@@ -34,6 +34,19 @@ Claude (telefoon) → plugin op klantsite (evereone/page-measure)
   plaatje gaat alleen als base64 in het ondertekende antwoord terug; hier wordt niets bewaard (ook niet 15 minuten).
   De site bewaart het zelf en vergelijkt.
 
+- **Plaatje van een gekozen blok (sinds 0.5.1, besluit 627):** bij een meting met selectors en `shot` (standaard aan)
+  een jpeg van het eerste blok met een strook van het blok erboven en eronder (elk hooguit 600 px; het blok zelf
+  hooguit 2000 px), hooguit 1200 px breed. Alleen voor het plaatje (de metingen zijn dan al gedaan): vaste en sticky
+  elementen buiten het blok onzichtbaar (cookiemelding, chatknop, 'naar boven', vaste kop; hooguit 5.000 elementen
+  bekeken); formulieren, cookiemelding en bewegende delen afgedekt in de hele uitsnede (magenta, PB1). Verkleinen
+  gebeurt in een aparte lege pagina zonder netwerk (V2). Elke stap heeft een tijdslimiet, samen hooguit 5 s per
+  breedte; daarna terugval naar het blok zelf, het eerste scherm of geen plaatje (V4). Het antwoord krijgt
+  `plaatje_uitsnede` met `boven_px`, `onder_px`, `blok_afgekapt`, `verborgen_vast`, `breedte`, `hoogte` en `terugval`
+  (`geen`, `blok`, `eerste_scherm` of `geen_plaatje`, met `reden`). Noem een plaatje alleen 'gecontroleerd' als
+  `terugval` `geen` is. Proefgroep (V5): alleen websitegesprek.nl, test.websitegesprek.nl en evereone.nl
+  (`PROEF_HOSTS` in `src/plaatje.mjs`); andere sites houden het plaatje van vóór 0.5.1. De link blijft 15 minuten
+  geldig, alleen in het werkgeheugen, met `Referrer-Policy: no-referrer` (PB3, PB5).
+
 - **Volgcodes vóór akkoord (sinds 0.3.0, `doel: "volgcodes"`, besluit 53):** maximaal 3 pagina's op 1440 px, als
   nieuwe bezoeker (schone browser, geen cookies), nergens op klikken, ~5 seconden wachten na het laden. Per pagina:
   verzoeken naar bekende volgdiensten (Meta, Google Analytics/Ads/Tag Manager, DoubleClick, Hotjar, Clarity,

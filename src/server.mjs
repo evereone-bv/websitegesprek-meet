@@ -13,7 +13,7 @@ import { GuardError } from './guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, MAX_SKEW_S, message, sign, verify, publicKeyFromRaw, loadOrCreateServerKey, NonceCache } from './keys.mjs';
 import { createBewaking, smtpMail } from './bewaking.mjs';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 
 export function createServer(cfg) {
   const clientKeys = cfg.clientKeys.map(publicKeyFromRaw);
@@ -97,7 +97,8 @@ export function createServer(cfg) {
       if (req.method === 'GET' && m) {
         const s = shots.get(m[1]);
         if (!s || s.exp < Date.now()) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Dit plaatje is verlopen (15 minuten geldig).'); }
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Content-Length': s.buf.length });
+        // PB3 (627): geen verwijzer naar buiten, naast no-store en noindex (Caddy zet dit ook).
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'Content-Length': s.buf.length });
         return res.end(s.buf);
       }
       if (req.method === 'POST' && path === '/v1/measure') {
@@ -126,7 +127,7 @@ export function createServer(cfg) {
         await acquire();
         let result;
         try {
-          result = await runJob(job, { allowPrivate: cfg.allowPrivate, allowHttp: cfg.allowHttp, storeShot, trackerStub: cfg.trackerStub, volgWaitMs: cfg.volgWaitMs });
+          result = await runJob(job, { allowPrivate: cfg.allowPrivate, allowHttp: cfg.allowHttp, storeShot, trackerStub: cfg.trackerStub, volgWaitMs: cfg.volgWaitMs, uitsnedeHosts: cfg.uitsnedeHosts, plaatjeTestVertragingMs: cfg.plaatjeTestVertragingMs });
         } finally {
           release();
         }

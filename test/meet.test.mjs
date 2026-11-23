@@ -11,6 +11,8 @@ import { isPublicIp, checkUrl, resolvePublic } from '../src/guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, message, sign, verify, publicKeyFromRaw, rawPublicKey } from '../src/keys.mjs';
 import { createServer, VERSION } from '../src/server.mjs';
 import { volgDienst, volgCookie } from '../src/measure.mjs';
+import { inProef, stap, PLAATJE } from '../src/plaatje.mjs';
+import { chromium, webkit } from 'playwright';
 
 // ---------- testpagina's ----------
 const BTN = 'background:#9e583f;color:#fff;border-radius:8px;padding:24px 29px;font:18px/18px sans-serif;text-decoration:none';
@@ -82,6 +84,19 @@ const pages = {
   '/knoppen': html(`<details class="v"><summary class="s">Open mij</summary><p>Binnen</p></details>`),
   '/voor-na': html(`<h1 style="margin:20px">Welkom</h1><p class="tekst" style="margin:20px">Gewone tekst.</p>
      <form style="margin:20px;height:80px;background:#eee"><input name="q" value="${'x'.repeat(5)}"></form>`),
+  // Sinds 0.5.1 (besluit 627): plaatje van een blok met de buren; vaste en sticky elementen weg, formulier afgedekt.
+  '/plaatje-buren': html(`<header class="kop" style="position:sticky;top:0;height:60px;background:#808080">Kop</header>
+     <section class="a" style="height:900px;background:#ff0000"></section>
+     <section class="b" style="height:300px;background:#00ff00"><h2 style="margin:0">Blok</h2></section>
+     <section class="c" style="height:200px;background:#0000ff"><form style="margin:0;height:40px;background:#fff"><input name="n" value="ingevuld"></form></section>
+     <section class="d" style="height:900px;background:#ffff00"></section>
+     <div id="wg-ck" style="position:fixed;bottom:0;left:0;right:0;height:150px;background:#000">Cookies</div>
+     <div class="zweef" style="position:fixed;right:10px;bottom:10px;width:120px;height:120px;background:#000"></div>`),
+  '/plaatje-rand': html(`<section class="eerste" style="height:300px;background:#00ff00"></section><section style="height:300px;background:#0000ff"></section>
+     <section class="laatste" style="height:300px;background:#ff0000"></section><div class="zweef" style="position:fixed;bottom:0;left:0;right:0;height:80px;background:#000"></div>`),
+  '/plaatje-lang': html(`<section style="height:400px;background:#ff0000"></section><section class="lang" style="height:20000px;background:#00ff00"></section><section style="height:300px;background:#0000ff"></section>`),
+  '/plaatje-canvas': html(`<section style="height:500px;background:#ff0000"></section><section class="b" style="height:300px;background:#00ff00"></section><section style="height:300px;background:#0000ff"></section>
+     <script>HTMLCanvasElement.prototype.toBlob=function(){};HTMLCanvasElement.prototype.toDataURL=function(){return 'data:,kapot';};window.createImageBitmap=function(){return Promise.reject(new Error('kapot'));};</script>`),
 };
 let fixtureHits = [];
 function startFixture() {
@@ -108,7 +123,7 @@ const client = crypto.generateKeyPairSync('ed25519');
 const otherClient = crypto.generateKeyPairSync('ed25519');
 function startMeet(overrides = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'meet-'));
-  const cfg = { port: 0, host: '127.0.0.1', dataDir, clientKeys: [rawPublicKey(client.publicKey)], publicBase: 'http://meet.test', maxConcurrent: 2, maxQueue: 2, maxBody: 32 * 1024, shotTtlMs: 60000, maxShotBytes: 10 * 1024 * 1024, allowPrivate: true, allowHttp: true, trackerStub: true, quiet: true, ...overrides };
+  const cfg = { port: 0, host: '127.0.0.1', dataDir, clientKeys: [rawPublicKey(client.publicKey)], publicBase: 'http://meet.test', maxConcurrent: 2, maxQueue: 2, maxBody: 32 * 1024, shotTtlMs: 60000, maxShotBytes: 10 * 1024 * 1024, allowPrivate: true, allowHttp: true, trackerStub: true, quiet: true, uitsnedeHosts: ['localhost'], ...overrides };
   const srv = createServer(cfg);
   return new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv)));
 }
@@ -196,6 +211,7 @@ test('plaatje is op te halen en verloopt (onbekend teken geeft 404)', async () =
   const img = await fetch(`http://127.0.0.1:${meet.address().port}/v1/plaatje/${token}`);
   assert.equal(img.status, 200);
   assert.equal(img.headers.get('content-type'), 'image/jpeg');
+  assert.equal(img.headers.get('referrer-policy'), 'no-referrer', 'PB3 (627)');
   assert.ok((await img.arrayBuffer()).byteLength > 1000);
   assert.equal((await fetch(`http://127.0.0.1:${meet.address().port}/v1/plaatje/${'a'.repeat(24)}.jpg`)).status, 404);
 });
@@ -464,4 +480,134 @@ test('concept: token in de kop X-WG-Meet, niet in het adres; geen andere domeine
   assert.ok(!JSON.stringify(r.json).includes(tok), 'token niet in het antwoord');
   const z = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?p=1`, url_kop: `${base}/concept?p=1`, kop: 'kort' }], widths: [390], shot: false });
   assert.equal(z.status, 400);
+});
+
+// ---------- sinds 0.5.1: plaatje van een gekozen blok met de buren (besluit 627, V1–V10, PB1–PB7) ----------
+function jpegMaat(buf) {
+  for (let i = 2; i < buf.length - 9;) {
+    if (buf[i] !== 0xff) { i++; continue; }
+    const m = buf[i + 1];
+    if (m >= 0xc0 && m <= 0xc3) return { hoogte: buf.readUInt16BE(i + 5), breedte: buf.readUInt16BE(i + 7) };
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
+}
+let pixelBrowser;
+async function pixels(buf, punten) {
+  pixelBrowser = pixelBrowser || await chromium.launch();
+  const p = await pixelBrowser.newPage();
+  try {
+    return await p.evaluate(async ({ b64, punten }) => {
+      const bmp = await createImageBitmap(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' }));
+      const c = new OffscreenCanvas(bmp.width, bmp.height); const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
+      return punten.map(([x, y]) => Array.from(g.getImageData(x, y, 1, 1).data.slice(0, 3)));
+    }, { b64: buf.toString('base64'), punten });
+  } finally { await p.close(); }
+}
+test.after(async () => { if (pixelBrowser) await pixelBrowser.close(); });
+const haal = async (srv, url) => Buffer.from(await (await fetch(`http://127.0.0.1:${srv.address().port}/v1/plaatje/${url.split('/').pop()}`)).arrayBuffer());
+const lijkt = ([r, g, b], [R, G, B]) => Math.abs(r - R) < 60 && Math.abs(g - G) < 60 && Math.abs(b - B) < 60;
+const plaatjeVan = async (p, sel, widths, extra = {}, srv = meet) => {
+  const r = await call(srv, { allowed_hosts: ['localhost'], pages: [{ url: `${base}${p}` }], widths, selectors: [sel], shot: true, ...extra });
+  assert.equal(r.status, 200, JSON.stringify(r.json).slice(0, 300));
+  return r.json.metingen;
+};
+
+test('627: proefgroep alleen eigen hosts (V5), ook met www; stap stopt op de deadline (V4)', async () => {
+  assert.ok(inProef('websitegesprek.nl') && inProef('www.evereone.nl') && inProef('test.websitegesprek.nl'));
+  assert.ok(!inProef('puglia-houses.com') && !inProef('nietwebsitegesprek.nl'));
+  await assert.rejects(stap(new Promise(() => {}), Date.now() + 50, 'proef'), /tijd op bij proef/);
+});
+test('627: blok met strook erboven en eronder; vaste en sticky elementen weg; formulier afgedekt (PB1)', async () => {
+  for (const m of await plaatjeVan('/plaatje-buren', '.b', [390])) {
+    const u = m.plaatje_uitsnede;
+    assert.deepEqual([u.terugval, u.boven_px, u.onder_px, u.blok_afgekapt, u.breedte, u.hoogte], ['geen', 600, 200, false, 390, 1100], JSON.stringify(u));
+    assert.ok(u.verborgen_vast >= 3, 'kop, cookiemelding en zwevende knop');
+    assert.ok(m.blokken[0].gevonden, 'metingen komen gewoon terug');
+    const buf = await haal(meet, m.plaatje);
+    assert.deepEqual(jpegMaat(buf), { breedte: 390, hoogte: 1100 });
+    const [boven, blok, formulier, onder] = await pixels(buf, [[200, 5], [200, 750], [200, 920], [200, 1095]]);
+    assert.ok(lijkt(boven, [255, 0, 0]) && lijkt(blok, [0, 255, 0]) && lijkt(onder, [0, 0, 255]), JSON.stringify([boven, blok, onder]));
+    assert.ok(lijkt(formulier, [255, 0, 255]), `formulier afgedekt: ${formulier}`);
+    const kolom = await pixels(buf, Array.from({ length: 110 }, (_, i) => [380, i * 10]));
+    assert.ok(!kolom.some((c) => c[0] + c[1] + c[2] < 60 || lijkt(c, [128, 128, 128])), 'geen cookiemelding, zwevende knop of vaste kop op het plaatje');
+  }
+});
+test('627: op 1440 verkleind naar 1200 px breed (in een aparte lege pagina, V2); op 390 niet', async () => {
+  const [m] = await plaatjeVan('/plaatje-buren', '.b', [1440]);
+  assert.equal(m.plaatje_uitsnede.terugval, 'geen', JSON.stringify(m.plaatje_uitsnede));
+  assert.equal(m.plaatje_uitsnede.breedte, 1200);
+  const maat = jpegMaat(await haal(meet, m.plaatje));
+  assert.equal(maat.breedte, 1200);
+  assert.equal(maat.hoogte, m.plaatje_uitsnede.hoogte);
+});
+test('627: een pagina die canvas, toBlob en createImageBitmap overschrijft, verandert het verkleinde plaatje niet (V2)', async () => {
+  const [m] = await plaatjeVan('/plaatje-canvas', '.b', [1440]);
+  assert.equal(m.plaatje_uitsnede.terugval, 'geen', JSON.stringify(m.plaatje_uitsnede));
+  const buf = await haal(meet, m.plaatje);
+  assert.equal(jpegMaat(buf).breedte, 1200);
+  const [blok] = await pixels(buf, [[600, Math.round((m.plaatje_uitsnede.boven_px + 150) * 1200 / 1440)]]);
+  assert.ok(lijkt(blok, [0, 255, 0]), JSON.stringify(blok));
+});
+test('627: eerste en laatste blok: alleen de buur die er is; vaste elementen tellen niet als buur (B4)', async () => {
+  const [a] = await plaatjeVan('/plaatje-rand', '.eerste', [390]);
+  assert.deepEqual([a.plaatje_uitsnede.boven_px, a.plaatje_uitsnede.onder_px], [0, 300]);
+  const [b] = await plaatjeVan('/plaatje-rand', '.laatste', [390]);
+  assert.deepEqual([b.plaatje_uitsnede.boven_px, b.plaatje_uitsnede.onder_px], [300, 0]);
+});
+test('627: blok hoger dan 2000 px wordt afgekapt; pagina van 20.000 px blijft binnen de grenzen (V7, B4)', async () => {
+  const [m] = await plaatjeVan('/plaatje-lang', '.lang', [390]);
+  const u = m.plaatje_uitsnede;
+  assert.deepEqual([u.terugval, u.blok_afgekapt, u.boven_px, u.onder_px, u.hoogte], ['geen', true, 400, 0, 2400], JSON.stringify(u));
+});
+test('627: concept (token in de kop) met plaatje van een blok', async () => {
+  const tok = 'T'.repeat(43);
+  const r = await call(meet, { allowed_hosts: ['localhost'], pages: [{ url: `${base}/concept?p=1`, url_kop: `${base}/concept?p=1`, kop: tok }], widths: [1440], selectors: ['h1'], shot: true });
+  const m = r.json.metingen[0];
+  assert.equal(m.status, 200);
+  assert.equal(m.plaatje_uitsnede.terugval, 'geen', JSON.stringify(m.plaatje_uitsnede));
+  assert.equal(jpegMaat(await haal(meet, m.plaatje)).breedte, 1200);
+});
+test('627: hangt een stap, dan binnen 10 s een antwoord met metingen en terugval met reden (V4, V6)', async () => {
+  const traag = await startMeet({ plaatjeTestVertragingMs: 60000 });
+  try {
+    const t0 = Date.now();
+    const [m] = await plaatjeVan('/plaatje-buren', '.b', [390], {}, traag);
+    assert.ok(Date.now() - t0 < 10000, `duurde ${Date.now() - t0} ms`);
+    assert.ok(m.blokken[0].gevonden);
+    assert.equal(m.plaatje_uitsnede.terugval, 'blok');
+    assert.match(m.plaatje_uitsnede.reden, /tijd op bij buren zoeken/);
+    assert.match(m.plaatje, /\/v1\/plaatje\//);
+  } finally { traag.close(); }
+});
+test('627: blok niet gevonden: terugval eerste scherm met reden (V6); shot=false: geen plaatje', async () => {
+  const [m] = await plaatjeVan('/plaatje-buren', '.bestaat-niet', [390]);
+  assert.equal(m.plaatje_uitsnede.terugval, 'eerste_scherm');
+  assert.match(m.plaatje_uitsnede.reden, /blok niet gevonden/);
+  const [n] = await plaatjeVan('/plaatje-buren', '.b', [390], { shot: false });
+  assert.equal(n.plaatje, undefined);
+  assert.equal(n.plaatje_uitsnede, undefined);
+});
+test('627: sites buiten de proefgroep houden het plaatje van vóór 0.5.1 (V5)', async () => {
+  const ander = await startMeet({ uitsnedeHosts: [] });
+  try {
+    const [m] = await plaatjeVan('/plaatje-buren', '.b', [1440], {}, ander);
+    assert.equal(m.plaatje_uitsnede, undefined);
+    assert.deepEqual(jpegMaat(await haal(ander, m.plaatje)), { breedte: 1440, hoogte: 300 });
+  } finally { ander.close(); }
+});
+test('627: 4 pagina\'s x 3 breedtes met plaatje hooguit 15 s langer dan zonder (V7)', async (t) => {
+  const job = { allowed_hosts: ['localhost'], pages: [1, 2, 3, 4].map(() => ({ url: `${base}/plaatje-buren` })), widths: [390, 768, 1440], selectors: ['.b'] };
+  const zonder = await call(meet, { ...job, shot: false });
+  const met = await call(meet, { ...job, shot: true });
+  assert.equal(met.status, 200);
+  assert.ok(met.json.metingen.every((m) => m.plaatje_uitsnede && m.plaatje_uitsnede.terugval === 'geen'));
+  t.diagnostic(`duur zonder plaatje ${zonder.json.duur_ms} ms, met plaatje ${met.json.duur_ms} ms`);
+  assert.ok(met.json.duur_ms - zonder.json.duur_ms <= 15000, `${met.json.duur_ms} tegen ${zonder.json.duur_ms}`);
+});
+const webkitAanwezig = (() => { try { return fs.existsSync(webkit.executablePath()); } catch { return false; } })();
+test('627: engine webkit geeft de uitsnede of een terugval naar het blok zelf (V9)', { skip: webkitAanwezig ? false : 'WebKit niet geïnstalleerd op deze machine' }, async () => {
+  const [m] = await plaatjeVan('/plaatje-buren', '.b', [1440], { engine: 'webkit' });
+  assert.ok(['geen', 'blok'].includes(m.plaatje_uitsnede.terugval), JSON.stringify(m.plaatje_uitsnede));
+  assert.match(m.plaatje, /\/v1\/plaatje\//);
 });

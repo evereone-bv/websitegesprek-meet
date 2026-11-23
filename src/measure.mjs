@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { chromium, webkit, devices } from 'playwright';
 import { checkUrl, resolvePublic, isPublicIp, GuardError } from './guard.mjs';
+import { maakPlaatje } from './plaatje.mjs';
 
 const PROBE_SRC = fs.readFileSync(new URL('./probe.js', import.meta.url), 'utf8');
 const UA_SUFFIX = 'Websitegesprek-meting/0.1 (+https://websitegesprek.nl)';
@@ -23,7 +24,7 @@ const HIDE_BANNERS_CSS = `
 #CybotCookiebotDialog, #CybotCookiebotDialogBodyUnderlay, .cmplz-cookiebanner, #cmplz-cookiebanner-container,
 #moove_gdpr_cookie_info_bar, #BorlabsCookieBox, .iubenda-cs-container, #onetrust-consent-sdk,
 .cc-window, .cc-banner, #cookie-banner, .cookie-banner, #gdpr-cookie-consent-bar, .wpl-cookie-banner,
-#usercentrics-root, #termly-code-snippet-support, .fc-consent-root { display: none !important; }`;
+#usercentrics-root, #termly-code-snippet-support, .fc-consent-root, #wg-ck { display: none !important; }`;
 
 // Volgcodes vóór akkoord (sinds 0.3.0, besluit Raymond 53): de pagina openen als nieuwe bezoeker (schone browser,
 // geen cookies), nergens op klikken, ~5 s wachten na het laden en noteren welke verzoeken naar bekende volgdiensten
@@ -104,8 +105,9 @@ const MASK_SELECTORS = [
   '.rev_slider_wrapper', '.rs-module-wrap', '.metaslider', '.wp-block-cover__video-background', '[class*="slider"]', '[class*="carousel"]',
   '[aria-live]', '[class*="countdown"]', '.wpcf7', '.wpforms-container', '.gform_wrapper', '.frm-fluent-form', '.fluentform',
   '#cookie-notice', '#cookie-law-info-bar', '.cky-consent-container', '#CybotCookiebotDialog', '.cmplz-cookiebanner', '#BorlabsCookieBox',
-  '.iubenda-cs-container', '#onetrust-consent-sdk', '.cc-window', '#cookie-banner', '.cookie-banner', '#usercentrics-root',
+  '.iubenda-cs-container', '#onetrust-consent-sdk', '.cc-window', '#cookie-banner', '.cookie-banner', '#usercentrics-root', '#wg-ck',
 ];
+const maskers = (page) => MASK_SELECTORS.map((sel) => page.locator(sel));
 
 export class JobError extends Error {
   constructor(code, message) {
@@ -325,13 +327,7 @@ async function measureOne(browser, target, width, v, env) {
     await page.waitForTimeout(400);
     const probe = await page.evaluate(`${PROBE_SRC}\nwgProbe(${JSON.stringify({ selectors: v.selectors, mobile, width })})`);
     Object.assign(out, probe);
-    if (v.shot && env.storeShot) {
-      let buf = null;
-      const first = v.selectors.length ? page.locator(v.selectors[0]).filter({ visible: true }).first() : null;
-      if (first && (await first.count())) buf = await first.screenshot({ type: 'jpeg', quality: 60, timeout: 5000 }).catch(() => null);
-      if (!buf) buf = await page.screenshot({ type: 'jpeg', quality: 55, timeout: 5000 }).catch(() => null);
-      if (buf) out.plaatje = env.storeShot(buf);
-    }
+    if (v.shot && env.storeShot) Object.assign(out, await maakPlaatje({ page, browser, v, width, host: target.host, env, maskers }));
   } catch (e) {
     out.fout = e instanceof GuardError || e instanceof JobError ? e.message : `Meten lukte niet: ${String(e.message).split('\n')[0].slice(0, 160)}`;
   } finally {
@@ -400,7 +396,7 @@ async function shootFull(page, width) {
   await page.addStyleTag({ content: '*,*::before,*::after{caret-color:transparent!important;scroll-behavior:auto!important}html{scrollbar-width:none}::-webkit-scrollbar{display:none}' }).catch(() => {});
   const docH = await page.evaluate(() => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)).catch(() => 0);
   const h = Math.max(1, Math.min(VOOR_NA.maxHeight, docH || VOOR_NA.maxHeight));
-  const mask = MASK_SELECTORS.map((sel) => page.locator(sel));
+  const mask = maskers(page);
   const buf = await page.screenshot({ type: 'jpeg', quality: VOOR_NA.quality, fullPage: true, clip: { x: 0, y: 0, width, height: h }, animations: 'disabled', caret: 'hide', mask, maskColor: '#FF00FF', timeout: 15000 });
   return { beeld: buf.toString('base64'), beeld_breedte: width, beeld_hoogte: h, pagina_hoogte: docH, gemaskeerd: 'formulieren, cookiemelding en bewegende delen (sliders, video, iframes)' };
 }

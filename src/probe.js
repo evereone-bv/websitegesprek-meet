@@ -433,5 +433,107 @@ function wgProbe(opts) {
     }
   }
 
-  return { schermbreedte: vw, paginabreedte: docW, standaardknop: standaardKnop, blokken: elements, meldingen: findings, lettergroottes };
+  const formulieren = wgFormulieren(opts, { visible, label, R, add, measuredEls });
+
+  return { schermbreedte: vw, paginabreedte: docW, standaardknop: standaardKnop, blokken: elements, meldingen: findings, lettergroottes, formulieren };
+}
+
+// Sinds 0.5.2 (besluit 631): kale formulieronderdelen op de HELE pagina, ook buiten de selectors. Kaal = dezelfde
+// rand, achtergrond, afronding en binnenruimte als de standaardopmaak van de browser (opts.standaard, gelezen in een
+// aparte lege pagina). Vinkjes en rondjes: browservinkje zonder eigen kleur of maat. Op mobiel ook velden en knoppen
+// lager dan 44 px. Alleen onderdelen die in beeld kunnen komen (Review V1); hooguit 300 gecontroleerde onderdelen en
+// 5000 bekeken elementen, anders afgekapt = true (V2); eigen fouten kosten de rest van de meting nooit (V4).
+const WG_MAX = 300, WG_MAX_SCAN = 5000;
+const WG_SOORTEN = { tekst: 'invoerveld(en)', tekstvak: 'tekstvak(ken)', keuzelijst: 'keuzelijst(en)', knop: 'knop(pen)', knop_input: 'knop(pen)', vinkje: 'vinkje(s)', rondje: 'keuzerondje(s)' };
+const WG_UITERLIJK = ['borderTopStyle', 'borderTopWidth', 'borderTopColor', 'borderTopLeftRadius', 'backgroundColor', 'paddingTop', 'paddingLeft'];
+const WG_TAG = { TEXTAREA: 'tekstvak', SELECT: 'keuzelijst', BUTTON: 'knop' };
+const WG_TYPE = { checkbox: 'vinkje', radio: 'rondje', submit: 'knop_input', button: 'knop_input', reset: 'knop_input', hidden: null, image: null, file: null, range: null, color: null };
+
+function wgFormulieren(opts, h) {
+  if (!opts.standaard) return { gecontroleerd: false, reden: opts.formulierReden || 'standaardopmaak niet gelezen' };
+  try {
+    return wgControleer(opts, h);
+  } catch (e) {
+    return { gecontroleerd: false, reden: 'fout in de controle' };
+  }
+}
+
+function wgControleer(opts, h) {
+  const o = { st: opts.standaard, mobile: opts.mobile, groepen: {}, laag: [], h, n: 0 };
+  const lijst = document.querySelectorAll('input, textarea, select, button');
+  const scan = Math.min(lijst.length, WG_MAX_SCAN);
+  let i = 0;
+  for (; i < scan && o.n < WG_MAX; i++) wgKandidaat(lijst[i], o);
+  wgMeld(o.groepen, o.laag, h);
+  const kaal = Object.values(o.groepen).reduce((s, g) => s + g.length, 0);
+  return { gecontroleerd: true, onderdelen: o.n, kaal, afgekapt: i < lijst.length };
+}
+
+function wgSoort(el) {
+  if (WG_TAG[el.tagName]) return WG_TAG[el.tagName];
+  const type = (el.getAttribute('type') || 'text').toLowerCase();
+  return type in WG_TYPE ? WG_TYPE[type] : 'tekst';
+}
+
+function wgKandidaat(el, o) {
+  const soort = wgSoort(el);
+  if (!soort || !o.st[soort] || !o.h.visible(el) || !wgInBeeld(el)) return;
+  o.n++;
+  wgBekijk(el, soort, o);
+}
+
+/** Kan in beeld komen: niet geheel links van of boven de pagina, niet rechts ervan, minstens 2 x 2 px, niet weggeknipt. */
+function wgInBeeld(el) {
+  const r = el.getBoundingClientRect();
+  const x = r.left + window.scrollX, y = r.top + window.scrollY;
+  const buiten = x + r.width <= 0 || y + r.height <= 0 || x >= document.documentElement.scrollWidth;
+  return r.width >= 2 && r.height >= 2 && !buiten && !wgVerknipt(el);
+}
+
+/** Verborgen met clip (bij absolute of fixed) of clip-path, op het onderdeel of tot 5 lagen erboven. */
+function wgVerknipt(el) {
+  let n = el;
+  for (let i = 0; n && n.nodeType === 1 && i < 6; i++, n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if ((cs.clip && cs.clip !== 'auto' && /absolute|fixed/.test(cs.position)) || (cs.clipPath && cs.clipPath !== 'none')) return true;
+  }
+  return false;
+}
+
+function wgKaal(cs, ref, soort) {
+  if (soort === 'vinkje' || soort === 'rondje') {
+    return cs.appearance !== 'none' && cs.accentColor === ref.accentColor && cs.width === ref.width && cs.height === ref.height;
+  }
+  return WG_UITERLIJK.every((k) => cs[k] === ref[k]);
+}
+
+function wgBekijk(el, soort, o) {
+  const cs = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  const maat = `${wgNaam(el, o.h.label)} (${o.h.R(r.width)} x ${o.h.R(r.height)} px, letter ${o.h.R(parseFloat(cs.fontSize))} px)`;
+  const naam = WG_SOORTEN[soort];
+  if (wgKaal(cs, o.st[soort], soort)) (o.groepen[naam] = o.groepen[naam] || []).push(maat);
+  else if (o.mobile && wgTikdoel(el, soort) && r.height < 44 && !o.h.measuredEls.some((m) => m.contains(el))) o.laag.push(maat);
+}
+
+/** Velden altijd; knoppen alleen in een formulier (een knop elders valt onder tikdoel_klein). */
+function wgTikdoel(el, soort) {
+  if (soort === 'vinkje' || soort === 'rondje') return false;
+  return !soort.startsWith('knop') || !!el.closest('form');
+}
+
+/** Naam van een onderdeel zonder ingevulde waarde (nooit el.value van een veld: dat kan een persoonsgegeven zijn). */
+function wgNaam(el, label) {
+  if (el.tagName === 'BUTTON' || ['submit', 'button', 'reset'].includes(el.type)) return label(el);
+  const cls = typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/)[0] : '';
+  const naam = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
+  return `${el.tagName.toLowerCase()}${cls}${naam ? ` "${naam.slice(0, 40)}"` : ''}`;
+}
+
+function wgMeld(groepen, laag, h) {
+  const lijstTekst = (l) => `${l.slice(0, 3).join('; ')}${l.length > 3 ? '; ...' : ''}`;
+  for (const [naam, lijst] of Object.entries(groepen)) {
+    h.add('formulier_kaal', `${lijst.length} ${naam} met de standaardopmaak van de browser (geen eigen rand, achtergrond, afronding of binnenruimte): ${lijstTekst(lijst)}. Geef ze de opmaak uit het ontwerpprofiel van de site (zelfde rand, afronding, hoogte en letter als de andere velden en knoppen).`, { regel: 'Ontwerpbasis: formulieronderdelen in de huisstijl (besluit 631)' });
+  }
+  if (laag.length) h.add('formulier_te_laag', `${laag.length} veld(en) of formulierknop(pen) lager dan 44 px op mobiel: ${lijstTekst(laag)}.`, { regel: 'WCAG 2.2 AAA 2.5.5 (44 px), minimaal AA 2.5.8 (24 px); besluit 631' });
 }

@@ -40,6 +40,6 @@ Caddy weigert dan meetopdrachten van andere adressen (de handtekening blijft daa
 
 ## E. Controle na wijzigingen
 
-- `npm test` lokaal groen (17 tests).
+- `npm test` lokaal groen (62 tests sinds 0.5.2; de WebKit-test wordt overgeslagen als WebKit niet geïnstalleerd is).
 - Na neerzetten: healthz, pubkey, proefmeting.
 - Firewall controleren in de console: `iptables -S MEET-EGRESS` toont de DROP-regels voor interne netwerken.

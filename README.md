@@ -47,7 +47,7 @@ Claude (telefoon) → plugin op klantsite (evereone/page-measure)
 
 ```
 npm install            # of: koppel een bestaande Playwright 1.63.0 in node_modules
-npm test               # 31 tests: adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken, vóór/na,
+npm test               # 62 tests (sinds 0.5.2): adressen, handtekeningen, metingen (Puglia-gevallen), alleen-kijken, vóór/na,
                        # overlap naast elkaar, standaardknop, nadruk en knoptekst (0.2.0),
                        # volgcodes vóór akkoord: direct, eigen cookiemelding, Consent Mode, text/plain, GTM na akkoord (0.3.0)
 ```
@@ -82,3 +82,12 @@ Er staan geen geheimen in deze code.
    3. op rapportage: `evereone/meet-server action=pin` (goedkeuringslink). Vanaf dat moment weigert rapportage alles wat met de oude sleutel is getekend.
    Eén keer geoefend op de testsite vóór livegang (V2).
 5. **Grenzen (V3–V5, V16):** 5 s per verzoek, 15 s per site, 240 s per ronde (rest = niet gemeten, één alarm), antwoorden afgekapt op 2 MB/1 MB, hooguit 3 doorverwijzingen binnen dezelfde site, adressen via `guard.mjs` met vastgezet IP-adres, gewone https-verzoeken buiten de meetrij (geen Playwright). De bewaking draait in de container op `meetnet` (br-meet), dus de firewall (`deploy/firewall.sh`) houdt ook 169.254.169.254 en interne netwerken tegen.
+
+## Kale formulieronderdelen (sinds 0.5.2, besluit 631)
+
+1. **Wat:** bij elke gewone meting (niet bij `volgcodes` en `voor_na`) bekijkt de probe op de hele pagina, ook buiten de selectors, elk invoerveld, tekstvak, keuzelijst, knop, vinkje en rondje. Is de opmaak gelijk aan de standaardopmaak van de browser (rand, achtergrond, afronding en binnenruimte; bij vinkjes en rondjes de browserweergave zonder eigen kleur of maat), dan volgt de melding `formulier_kaal`, per soort één melding met aantal en hooguit 3 voorbeelden. Op mobiel meldt `formulier_te_laag` velden en formulierknoppen met eigen opmaak die lager zijn dan 44 px.
+2. **Standaardopmaak:** per opdracht en schermsoort gelezen in een aparte lege browsercontext zonder netwerk en zonder code van de klant (`leesStandaard`, hooguit 3 s). Er staat dus niets vast in de code dat bij een nieuwe Playwright-versie veroudert.
+3. **Veld `formulieren` per meting:** `{ gecontroleerd: true, onderdelen, kaal, afgekapt }` of `{ gecontroleerd: false, reden }` met reden `niet in proefgroep`, `standaardopmaak niet gelezen` of `fout in de controle`. Noem formulieren alleen gecontroleerd als `gecontroleerd` true is en `afgekapt` niet true.
+4. **Grenzen:** alleen onderdelen die in beeld kunnen komen (niet buiten de pagina, minstens 2 x 2 px, niet weggeknipt met clip of clip-path); hooguit 300 gecontroleerde onderdelen en 5000 bekeken elementen, daarboven `afgekapt: true`. Ingevulde waarden van velden komen nooit in een melding.
+5. **Proefgroep:** eerst alleen websitegesprek.nl, test.websitegesprek.nl en evereone.nl (`PROEF_FORMULIEREN` in `src/measure.mjs`); in de teststand altijd aan. Na 3 werkdagen zonder fouten haalt een kleine pull request de lijst weg.
+6. **Bekende grenzen (Review 631 K3, K4):** een kaal veld van een soort met een eigen standaard (bijvoorbeeld `type=date`) wordt vergeleken met een gewoon tekstveld en dus niet als kaal herkend, hooguit als te laag. Een site met `color-scheme: dark` krijgt donkere standaardvelden; die worden niet als kaal herkend.

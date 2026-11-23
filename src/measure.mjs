@@ -107,6 +107,59 @@ const MASK_SELECTORS = [
   '.iubenda-cs-container', '#onetrust-consent-sdk', '.cc-window', '#cookie-banner', '.cookie-banner', '#usercentrics-root',
 ];
 
+// Sinds 0.5.2 (besluit 631): de standaardopmaak van de browser voor formulieronderdelen, gelezen in een aparte lege
+// pagina (eigen context, geen netwerk, geen code van de klant). De probe vergelijkt elk veld, elke knop en elk vinkje
+// op de hele gemeten pagina hiermee; gelijk = 'kaal' (de site gaf het onderdeel geen eigen opmaak).
+const STANDAARD_HTML = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>'
+  + '<input data-k="tekst" type="text"><textarea data-k="tekstvak"></textarea><select data-k="keuzelijst"><option>a</option></select>'
+  + '<button data-k="knop">a</button><input data-k="knop_input" type="submit" value="a">'
+  + '<input data-k="vinkje" type="checkbox"><input data-k="rondje" type="radio"></body></html>';
+const STANDAARD_MS = 3000;
+// Proefgroep (besluit 631, zoals 627 V5): eerst alleen onze eigen sites; na 3 werkdagen zonder fouten haalt een kleine
+// pull request deze lijst weg. In de teststand (allowPrivate) altijd aan.
+export const PROEF_FORMULIEREN = ['websitegesprek.nl', 'test.websitegesprek.nl', 'evereone.nl'];
+export function formulierenAan(host, env = {}) {
+  return !!env.allowPrivate || PROEF_FORMULIEREN.includes(String(host).toLowerCase().replace(/^www\./, ''));
+}
+export const STANDAARD_VELDEN = ['appearance', 'borderTopStyle', 'borderTopWidth', 'borderTopColor', 'borderTopLeftRadius', 'backgroundColor', 'paddingTop', 'paddingLeft', 'fontSize', 'accentColor', 'width', 'height'];
+
+/** Leest per soort onderdeel de standaardopmaak van deze browser (null als het niet lukt; de meting gaat dan door). */
+async function leesStandaard(browser, mobile, v, env) {
+  // Alleen in de teststand: het lezen laten falen of hangen (test van Review V3).
+  if (env.allowPrivate && env.testStandaard) return env.testStandaard === 'traag' ? new Promise((r) => setTimeout(() => r(null), 10000)) : Promise.reject(new Error('test'));
+  const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1440, height: 400 }, isMobile: mobile && v.engine === 'chromium', hasTouch: mobile, javaScriptEnabled: true });
+  try {
+    await context.route('**/*', (route) => route.abort());
+    const page = await context.newPage();
+    await page.setContent(STANDAARD_HTML, { timeout: 3000 });
+    return await page.evaluate((velden) => Object.fromEntries([...document.querySelectorAll('[data-k]')].map((el) => {
+      const cs = getComputedStyle(el);
+      return [el.dataset.k, Object.fromEntries(velden.map((k) => [k, cs[k]]))];
+    })), STANDAARD_VELDEN);
+  } catch { return null; } finally { await context.close().catch(() => {}); }
+}
+
+/** Standaardopmaak voor de schermsoorten (mobiel, desktop) die deze opdracht meet. */
+async function standaardVoorOpdracht(browser, v, env) {
+  const out = new Map();
+  for (const mobile of new Set(v.widths.map((w) => w < 600))) out.set(mobile, await binnen(leesStandaard(browser, mobile, v, env), STANDAARD_MS));
+  return out;
+}
+
+/** Wat de probe over formulieren meekrijgt: de standaardopmaak, of de reden waarom niet (Review V3). */
+export function formulierOpties(v, host, env, mobile) {
+  if (!formulierenAan(host, env)) return { standaard: null, formulierReden: 'niet in proefgroep' };
+  const standaard = v.standaard ? v.standaard.get(mobile) || null : null;
+  return { standaard, formulierReden: standaard ? '' : 'standaardopmaak niet gelezen' };
+}
+
+/** Wacht hooguit ms milliseconden; daarna null (de meting gaat door zonder formuliercontrole). */
+function binnen(promise, ms) {
+  let timer;
+  const stop = new Promise((r) => { timer = setTimeout(() => r(null), ms); });
+  return Promise.race([promise.catch(() => null), stop]).finally(() => clearTimeout(timer));
+}
+
 export class JobError extends Error {
   constructor(code, message) {
     super(message);
@@ -220,6 +273,7 @@ export async function runJob(job, env = {}) {
   const results = [];
   try {
     const work = (async () => {
+      if (!v.volgcodes && !v.voorNa && targets.some((t) => formulierenAan(t.host, env))) v.standaard = await standaardVoorOpdracht(browser, v, env);
       for (const t of targets) {
         for (const width of v.widths) {
           results.push(await measureOne(browser, t, width, v, env));
@@ -323,7 +377,7 @@ async function measureOne(browser, target, width, v, env) {
       await page.locator(sel).filter({ visible: true }).first().scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
     }
     await page.waitForTimeout(400);
-    const probe = await page.evaluate(`${PROBE_SRC}\nwgProbe(${JSON.stringify({ selectors: v.selectors, mobile, width })})`);
+    const probe = await page.evaluate(`${PROBE_SRC}\nwgProbe(${JSON.stringify({ selectors: v.selectors, mobile, width, ...formulierOpties(v, target.host, env, mobile) })})`);
     Object.assign(out, probe);
     if (v.shot && env.storeShot) {
       let buf = null;

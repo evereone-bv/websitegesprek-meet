@@ -13,7 +13,7 @@ import { GuardError } from './guard.mjs';
 import { REQ_PREFIX, RESP_PREFIX, MAX_SKEW_S, message, sign, verify, publicKeyFromRaw, loadOrCreateServerKey, NonceCache } from './keys.mjs';
 import { createBewaking, smtpMail } from './bewaking.mjs';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.2';
 
 export function createServer(cfg) {
   const clientKeys = cfg.clientKeys.map(publicKeyFromRaw);
